@@ -12,7 +12,7 @@ Transition logic:
 
 This demo supports two modes:
   1. voice mode with Google STT/TTS when Google Cloud ADC credentials exist
-  2. text-mode fallback when only GOOGLE_API_KEY / Gemini API access exists
+  2. LiveKit chat/text fallback when only GOOGLE_API_KEY / Gemini API access exists
 """
 
 import asyncio
@@ -89,6 +89,7 @@ STAGE_OPENINGS = {
 
 TURNS_TO_ADVANCE = 1
 INTRO_TIMEOUT_SECONDS = 60
+CHAT_TOPIC = "lk.chat"
 
 
 class InterviewStateMachine:
@@ -143,46 +144,87 @@ async def _call_gemini(prompt: str) -> str:
     return "".join(chunks).strip()
 
 
+async def _send_chat(ctx: JobContext, text: str):
+    """Send a text response to the LiveKit console chat and mirror it to logs."""
+    logger.info("Interviewer: %s", text)
+    print(f"\nInterviewer: {text}")
+    await ctx.room.local_participant.send_text(text, topic=CHAT_TOPIC)
+
+
 async def _run_text_mode(ctx: JobContext):
     """
-    Text-mode fallback for demos that have a Gemini API key but do not have
-    Google Cloud STT/TTS credentials. This still demonstrates the required
-    LiveKit job dispatch plus the staged interview state machine.
+    LiveKit chat/text fallback for demos that have Gemini API access but do not
+    have Google Cloud STT/TTS credentials. The user types in the LiveKit console
+    chat, and the agent replies to that same chat topic.
     """
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_NONE)
     state = InterviewStateMachine()
+    done = asyncio.Event()
+    processing_lock = asyncio.Lock()
 
-    logger.info("Running in text-mode fallback. Room: %s", ctx.room.name)
-    print("\n=== TEXT MODE MOCK INTERVIEW ===")
-    print(STAGE_OPENINGS[InterviewStage.SELF_INTRO])
+    logger.info("Running in LiveKit chat fallback. Room: %s", ctx.room.name)
+    print("\n=== LIVEKIT CHAT MOCK INTERVIEW ===")
+    print("Type your candidate answers in the LiveKit console chat.")
+
+    await _send_chat(ctx, STAGE_OPENINGS[InterviewStage.SELF_INTRO])
+
+    async def advance_and_announce():
+        new_stage = state.advance()
+        await _send_chat(ctx, STAGE_OPENINGS[new_stage])
+        if new_stage == InterviewStage.COMPLETE:
+            done.set()
 
     async def timeout_watchdog():
         await asyncio.sleep(INTRO_TIMEOUT_SECONDS)
         if state.stage == InterviewStage.SELF_INTRO and not state.can_advance():
             logger.warning("SELF_INTRO timeout fired; moving to PAST_EXPERIENCE")
-            state.advance()
-            print("\n" + STAGE_OPENINGS[state.stage])
+            await advance_and_announce()
 
+    async def handle_candidate_message(reader, participant_identity: str):
+        async with processing_lock:
+            if state.stage == InterviewStage.COMPLETE:
+                return
+
+            user_text = (await reader.read_all()).strip()
+            if not user_text:
+                return
+
+            logger.info("Candidate [%s]: %s", participant_identity, user_text)
+            print(f"\nCandidate: {user_text}")
+
+            prompt = (
+                f"{STAGE_PROMPTS[state.stage]}\n\n"
+                f"Candidate said: {user_text}\n\n"
+                "Respond briefly as the interviewer."
+            )
+
+            try:
+                response = await _call_gemini(prompt)
+            except Exception:
+                logger.exception("Gemini call failed; using deterministic fallback response")
+                response = "Thank you for sharing that. I appreciate the clear answer."
+
+            if response:
+                await _send_chat(ctx, response)
+
+            state.record_user_turn()
+            logger.info(
+                "[%s] user turn #%d  (%.1fs in stage)",
+                state.stage.value,
+                state._user_turns,
+                state.time_in_stage(),
+            )
+
+            if state.can_advance():
+                await advance_and_announce()
+
+    def on_chat_message(reader, participant_identity: str):
+        asyncio.create_task(handle_candidate_message(reader, participant_identity))
+
+    ctx.room.register_text_stream_handler(CHAT_TOPIC, on_chat_message)
     watchdog_task = asyncio.create_task(timeout_watchdog())
 
-    while state.stage != InterviewStage.COMPLETE:
-        user_text = await asyncio.to_thread(input, "\nCandidate: ")
-        if not user_text.strip():
-            continue
-
-        prompt = (
-            f"{STAGE_PROMPTS[state.stage]}\n\n"
-            f"Candidate said: {user_text}\n\n"
-            "Respond briefly as the interviewer."
-        )
-        response = await _call_gemini(prompt)
-        print(f"\nInterviewer: {response}")
-
-        state.record_user_turn()
-        if state.can_advance():
-            state.advance()
-            print("\n" + STAGE_OPENINGS[state.stage])
-
+    await done.wait()
     watchdog_task.cancel()
 
 
@@ -265,7 +307,7 @@ async def entrypoint(ctx: JobContext):
         logger.info("Google Cloud ADC found; starting full voice pipeline")
         await _run_voice_mode(ctx)
     else:
-        logger.info("No Google Cloud ADC found; starting text-mode fallback")
+        logger.info("No Google Cloud ADC found; starting LiveKit chat fallback")
         await _run_text_mode(ctx)
 
 

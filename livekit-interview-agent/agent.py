@@ -1,35 +1,43 @@
 """
 LiveKit Agents - AI Mock Interview Demo
 ========================================
-A voice interview agent with a two-stage state machine:
+A mock interview agent with a two-stage state machine:
   Stage 1: SELF_INTRO  — candidate introduces themselves
   Stage 2: PAST_EXPERIENCE — candidate describes a past project or role
   Stage 3: COMPLETE    — interview wraps up
 
 Transition logic:
-  - Natural: after the user finishes speaking in a stage, the agent advances.
+  - Natural: after the user answers in a stage, the agent advances.
   - Fallback: if SELF_INTRO lasts over 60 seconds with no answer, auto-advance.
+
+This demo supports two modes:
+  1. voice mode with Google STT/TTS when Google Cloud ADC credentials exist
+  2. text-mode fallback when only GOOGLE_API_KEY / Gemini API access exists
 """
 
 import asyncio
 import enum
 import logging
+import os
 import time
 
 from dotenv import load_dotenv
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
-from livekit.agents.pipeline import VoicePipelineAgent
-from livekit.plugins import google, silero
+from livekit.plugins import google
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("interview-agent")
 
+try:
+    from livekit.agents.pipeline import VoicePipelineAgent
+    from livekit.plugins import silero
+except Exception as exc:  # pragma: no cover - optional voice stack
+    VoicePipelineAgent = None
+    silero = None
+    logger.warning("Voice pipeline imports unavailable; text-mode fallback only: %s", exc)
 
-# ---------------------------------------------------------------------------
-# Stage definitions
-# ---------------------------------------------------------------------------
 
 class InterviewStage(enum.Enum):
     SELF_INTRO = "self_intro"
@@ -37,8 +45,6 @@ class InterviewStage(enum.Enum):
     COMPLETE = "complete"
 
 
-# System prompt injected at position [0] of the chat context for each stage.
-# Keeps the LLM focused on its role without bleeding across stages.
 STAGE_PROMPTS = {
     InterviewStage.SELF_INTRO: (
         "You are a professional, friendly AI interviewer running a mock interview. "
@@ -64,9 +70,6 @@ STAGE_PROMPTS = {
     ),
 }
 
-# Opening line spoken aloud when entering each stage.
-# Stored separately so the agent can say them with agent.say() rather than
-# waiting for the LLM to re-generate them each time.
 STAGE_OPENINGS = {
     InterviewStage.SELF_INTRO: (
         "Hello! Welcome to your mock interview. "
@@ -84,50 +87,28 @@ STAGE_OPENINGS = {
     ),
 }
 
-# How many user speech turns to wait for before advancing from a stage.
-# Set to 1 so the agent advances after the candidate gives their first answer.
 TURNS_TO_ADVANCE = 1
-
-# Seconds to wait in SELF_INTRO before forcing a transition (fallback).
 INTRO_TIMEOUT_SECONDS = 60
 
 
-# ---------------------------------------------------------------------------
-# State machine
-# ---------------------------------------------------------------------------
-
 class InterviewStateMachine:
-    """
-    Lightweight state machine that tracks the current interview stage,
-    how long we've been in it, and how many user turns have occurred.
-    """
+    """Tracks the current interview stage, elapsed stage time, and user turns."""
 
     def __init__(self):
         self.stage: InterviewStage = InterviewStage.SELF_INTRO
         self._stage_start: float = time.monotonic()
         self._user_turns: int = 0
 
-    # --- Queries ---
-
     def time_in_stage(self) -> float:
-        """Seconds elapsed since entering the current stage."""
         return time.monotonic() - self._stage_start
 
     def can_advance(self) -> bool:
-        """True once the user has spoken enough turns in this stage."""
         return self._user_turns >= TURNS_TO_ADVANCE
 
-    # --- Mutations ---
-
     def record_user_turn(self):
-        """Increment the user-turn counter for the current stage."""
         self._user_turns += 1
 
     def advance(self) -> InterviewStage:
-        """
-        Move to the next stage, reset per-stage counters, and return the new stage.
-        Call only when can_advance() is True or a timeout fires.
-        """
         if self.stage == InterviewStage.SELF_INTRO:
             self.stage = InterviewStage.PAST_EXPERIENCE
         elif self.stage == InterviewStage.PAST_EXPERIENCE:
@@ -139,54 +120,100 @@ class InterviewStateMachine:
         return self.stage
 
 
-# ---------------------------------------------------------------------------
-# Stage transition helper
-# ---------------------------------------------------------------------------
+def _google_cloud_adc_available() -> bool:
+    """
+    Google's Gemini API key is enough for the LLM, but Google STT/TTS require
+    Google Cloud Application Default Credentials. Only enable voice mode when
+    those credentials are present.
+    """
+    return bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 
-async def _do_advance(agent: VoicePipelineAgent, state: InterviewStateMachine):
+
+async def _call_gemini(prompt: str) -> str:
+    """Minimal Gemini call for text-mode fallback."""
+    model = google.LLM(model="gemini-2.0-flash-exp")
+    chat_ctx = llm.ChatContext().append(role="user", text=prompt)
+    chunks = []
+
+    async for chunk in model.chat(chat_ctx=chat_ctx):
+        delta = getattr(chunk, "delta", None)
+        if delta and getattr(delta, "content", None):
+            chunks.append(delta.content)
+
+    return "".join(chunks).strip()
+
+
+async def _run_text_mode(ctx: JobContext):
     """
-    Advance the state machine and update the agent:
-      1. Swap the system prompt so the LLM stays in-role for the new stage.
-      2. Speak the stage's opening line.
-    This function is safe to call from both the event handler and the watchdog.
+    Text-mode fallback for demos that have a Gemini API key but do not have
+    Google Cloud STT/TTS credentials. This still demonstrates the required
+    LiveKit job dispatch plus the staged interview state machine.
     """
+    await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_NONE)
+    state = InterviewStateMachine()
+
+    logger.info("Running in text-mode fallback. Room: %s", ctx.room.name)
+    print("\n=== TEXT MODE MOCK INTERVIEW ===")
+    print(STAGE_OPENINGS[InterviewStage.SELF_INTRO])
+
+    async def timeout_watchdog():
+        await asyncio.sleep(INTRO_TIMEOUT_SECONDS)
+        if state.stage == InterviewStage.SELF_INTRO and not state.can_advance():
+            logger.warning("SELF_INTRO timeout fired; moving to PAST_EXPERIENCE")
+            state.advance()
+            print("\n" + STAGE_OPENINGS[state.stage])
+
+    watchdog_task = asyncio.create_task(timeout_watchdog())
+
+    while state.stage != InterviewStage.COMPLETE:
+        user_text = await asyncio.to_thread(input, "\nCandidate: ")
+        if not user_text.strip():
+            continue
+
+        prompt = (
+            f"{STAGE_PROMPTS[state.stage]}\n\n"
+            f"Candidate said: {user_text}\n\n"
+            "Respond briefly as the interviewer."
+        )
+        response = await _call_gemini(prompt)
+        print(f"\nInterviewer: {response}")
+
+        state.record_user_turn()
+        if state.can_advance():
+            state.advance()
+            print("\n" + STAGE_OPENINGS[state.stage])
+
+    watchdog_task.cancel()
+
+
+async def _do_voice_advance(agent: VoicePipelineAgent, state: InterviewStateMachine):
     if state.stage == InterviewStage.COMPLETE:
-        return  # Nothing left to advance
+        return
 
     new_stage = state.advance()
-
-    # Replace the system message in the chat context (always at index 0).
     agent.chat_ctx.messages[0] = llm.ChatMessage(
         role="system",
         content=STAGE_PROMPTS[new_stage],
     )
+    await agent.say(
+        STAGE_OPENINGS[new_stage],
+        allow_interruptions=new_stage != InterviewStage.COMPLETE,
+    )
 
-    # Speak the opening question / closing statement for the new stage.
-    # allow_interruptions=False on the final closing so it plays in full.
-    allow_interruptions = new_stage != InterviewStage.COMPLETE
-    await agent.say(STAGE_OPENINGS[new_stage], allow_interruptions=allow_interruptions)
 
+async def _run_voice_mode(ctx: JobContext):
+    """Full voice mode. Requires Google Cloud ADC for google.STT/google.TTS."""
+    if VoicePipelineAgent is None or silero is None:
+        raise RuntimeError("Voice dependencies are unavailable")
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-async def entrypoint(ctx: JobContext):
-    """
-    Called by the LiveKit worker when a new room job is dispatched.
-    Wires up the voice pipeline and drives the interview state machine.
-    """
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-
     state = InterviewStateMachine()
 
-    # Build the initial chat context with the SELF_INTRO system prompt.
     initial_ctx = llm.ChatContext().append(
         role="system",
         text=STAGE_PROMPTS[InterviewStage.SELF_INTRO],
     )
 
-    # Assemble the voice pipeline: VAD → STT (Google) → LLM (Gemini) → TTS (Google).
     agent = VoicePipelineAgent(
         vad=silero.VAD.load(),
         stt=google.STT(),
@@ -196,20 +223,10 @@ async def entrypoint(ctx: JobContext):
     )
 
     agent.start(ctx.room)
-
-    # Speak the first question to kick off the interview.
     await agent.say(STAGE_OPENINGS[InterviewStage.SELF_INTRO], allow_interruptions=True)
 
-    # ------------------------------------------------------------------
-    # Natural transition: advance when the user has answered the question
-    # ------------------------------------------------------------------
     @agent.on("user_speech_committed")
     def on_user_speech(_msg: llm.ChatMessage):
-        """
-        Fires each time the user finishes a speech turn.
-        We record the turn and, if we've reached the threshold, schedule
-        an advance on the event loop (can't await inside a sync callback).
-        """
         if state.stage == InterviewStage.COMPLETE:
             return
 
@@ -221,45 +238,36 @@ async def entrypoint(ctx: JobContext):
             state.time_in_stage(),
         )
 
-        # Only advance once per stage (guard against duplicate calls).
         if state.can_advance():
-            asyncio.ensure_future(_do_advance(agent, state))
+            asyncio.ensure_future(_do_voice_advance(agent, state))
 
-    # ------------------------------------------------------------------
-    # Time-based fallback: auto-advance SELF_INTRO after 60 seconds
-    # ------------------------------------------------------------------
-    async def _timeout_watchdog():
-        """
-        Polls every 5 seconds while in SELF_INTRO.
-        If 60 seconds pass without a natural transition (e.g. the candidate
-        is silent or the VAD misses their speech), force an advance so the
-        interview doesn't get stuck.
-        """
+    async def timeout_watchdog():
         while state.stage == InterviewStage.SELF_INTRO:
             await asyncio.sleep(5)
             if (
                 state.stage == InterviewStage.SELF_INTRO
                 and state.time_in_stage() >= INTRO_TIMEOUT_SECONDS
-                and not state.can_advance()   # hasn't already triggered naturally
+                and not state.can_advance()
             ):
                 logger.warning(
                     "SELF_INTRO timeout after %.1fs — forcing advance",
                     state.time_in_stage(),
                 )
-                await _do_advance(agent, state)
-                break   # watchdog job is done once the stage advances
+                await _do_voice_advance(agent, state)
+                break
 
-    asyncio.ensure_future(_timeout_watchdog())
-
-    # Hold the coroutine open for the lifetime of the room connection.
+    asyncio.ensure_future(timeout_watchdog())
     await asyncio.sleep(float("inf"))
 
 
-# ---------------------------------------------------------------------------
-# Worker bootstrap
-# ---------------------------------------------------------------------------
+async def entrypoint(ctx: JobContext):
+    if _google_cloud_adc_available():
+        logger.info("Google Cloud ADC found; starting full voice pipeline")
+        await _run_voice_mode(ctx)
+    else:
+        logger.info("No Google Cloud ADC found; starting text-mode fallback")
+        await _run_text_mode(ctx)
+
 
 if __name__ == "__main__":
-    cli.run_app(
-        WorkerOptions(entrypoint_fnc=entrypoint)
-    )
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

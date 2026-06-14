@@ -53,3 +53,4 @@ livekit-interview-agent/.env.env
 **/.env
 .env
 **/.env
+.venv/

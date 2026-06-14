@@ -47,3 +47,9 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+#Enviornment Variables
+livekit-interview-agent/.env.env
+**/.env
+.env
+**/.env

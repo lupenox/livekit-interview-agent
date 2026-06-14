@@ -1,2 +1,5 @@
-livekit-agents[google,silero]>=0.11.0,<1.0.0
+livekit-agents>=0.11.0,<1.0.0
+livekit-plugins-google
+livekit-plugins-silero
 python-dotenv>=1.0.0
+av>=17.1.0

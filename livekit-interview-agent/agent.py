@@ -9,6 +9,8 @@ Run as a LiveKit worker with:
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 import asyncio
 import enum
 import logging

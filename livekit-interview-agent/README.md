@@ -81,10 +81,9 @@ When the worker starts successfully, join a room from the LiveKit Agents Playgro
 ## Interview flow
 
 - The session starts in `SELF_INTRO` and asks the candidate to introduce themself.
-- The agent no longer rushes past very short introductions. It waits for at least one substantive intro before moving on, or gently nudges the candidate for more detail.
-- The transition into `PAST_EXPERIENCE` is conversational and asks for the project goal, the candidate's ownership, and why the work mattered.
-- The project discussion now lasts for multiple candidate turns before wrapping up. Follow-ups should dig into ownership, tradeoffs, obstacles, collaboration, impact, and lessons learned instead of asking shallow generic questions.
-- The fallback watchdog is staged: it nudges the self-introduction after quiet/short responses, force-advances if the intro stalls too long, nudges the project discussion if it stalls, and only wraps after a longer project timeout.
+- After the first final user transcript, the state machine advances to `PAST_EXPERIENCE` and asks about a project or past role.
+- After the next final user transcript, the state machine advances to `COMPLETE` and closes with a short thank-you.
+- If no final transcript is received during the self-introduction stage within 60 seconds, a watchdog advances to the past-experience stage automatically.
 
 ## Debugging
 

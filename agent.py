@@ -27,13 +27,8 @@ load_dotenv(".env.local")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("interview-agent")
 
-INTRO_NUDGE_SECONDS = 45
-INTRO_FORCE_ADVANCE_SECONDS = 90
-PAST_EXPERIENCE_NUDGE_SECONDS = 75
-PAST_EXPERIENCE_WRAP_SECONDS = 210
-MIN_INTRO_WORDS_TO_ADVANCE = 12
-MIN_PAST_EXPERIENCE_TURNS = 3
-MIN_PAST_EXPERIENCE_WORDS = 35
+INTRO_TIMEOUT_SECONDS = 60
+TURNS_TO_ADVANCE = 1
 GEMINI_MODEL = "gemini-2.5-flash"
 DEEPGRAM_MODEL = "nova-3"
 ELEVENLABS_MODEL = "eleven_turbo_v2_5"
@@ -47,29 +42,22 @@ class InterviewStage(enum.Enum):
 
 STAGE_PROMPTS = {
     InterviewStage.SELF_INTRO: (
-        "You are a friendly but professional mock interviewer. You are in the "
-        "SELF INTRODUCTION stage. The candidate should introduce themselves, their "
-        "background, and what they are looking for. If their answer is only a few "
-        "words, do not move on yet; warmly ask one specific, low-pressure question "
-        "to help them expand, such as their current focus, relevant background, or "
-        "what kind of role they are targeting. If they give a real introduction, "
-        "acknowledge it naturally and be ready to transition to project experience. "
-        "Avoid repeating the exact opening prompt."
+        "You are a professional, friendly AI interviewer running a mock interview. "
+        "You are in the SELF INTRODUCTION stage. The opening question has already "
+        "been asked, so do not repeat it. Listen to the candidate's introduction "
+        "and respond with a brief warm acknowledgement in one or two sentences. "
+        "Do not ask follow-up questions yet."
     ),
     InterviewStage.PAST_EXPERIENCE: (
-        "You are a friendly but professional mock interviewer in the PAST "
-        "EXPERIENCE / PROJECT DISCUSSION stage. Make this feel like a real "
-        "conversation, not a checklist. Ask one thoughtful follow-up at a time. "
-        "Prefer deeper questions about context, ownership, technical or product "
-        "decisions, tradeoffs, obstacles, collaboration, measurable impact, and "
-        "what the candidate learned. Build on details the candidate already shared. "
-        "Do not end the interview after the first short project answer; keep the "
-        "discussion going for several turns unless the candidate clearly wants to stop."
+        "You are a professional, friendly AI interviewer running a mock interview. "
+        "You are in the PAST EXPERIENCE / PROJECT DISCUSSION stage. The stage "
+        "question has already been asked, so do not repeat it. Listen to the "
+        "candidate's answer and respond with a concise encouraging reaction. You "
+        "may ask one short clarifying question if it adds value."
     ),
     InterviewStage.COMPLETE: (
-        "The mock interview is complete. Give a warm, concise wrap-up that thanks "
-        "the candidate, briefly reflects that they discussed their background and "
-        "project experience, and wishes them well. Do not ask another interview question."
+        "The mock interview is complete. Thank the candidate warmly and briefly. "
+        "Wish them well in their job search. Do not ask another interview question."
     ),
 }
 
@@ -79,14 +67,12 @@ STAGE_OPENINGS = {
         "yourself and telling me a bit about your background?"
     ),
     InterviewStage.PAST_EXPERIENCE: (
-        "Thanks, that gives me a helpful starting point. Let's shift into your "
-        "past experience. Could you walk me through one project or role you're "
-        "proud of — what the goal was, what you owned, and why it mattered?"
+        "Thank you for that introduction. Now, could you tell me about a past "
+        "experience or project you're proud of, and what your role was?"
     ),
     InterviewStage.COMPLETE: (
-        "That's a good place for us to wrap up. Thank you for sharing both your "
-        "background and your project experience today. I hope this was useful, "
-        "and I wish you the best with your next interviews."
+        "That wraps up our mock interview. Thank you so much for your time. "
+        "You did a great job, and I wish you the best with your job search."
     ),
 }
 
@@ -97,33 +83,17 @@ class InterviewStateMachine:
 
     stage: InterviewStage = InterviewStage.SELF_INTRO
     user_turns: int = 0
-    total_words: int = 0
-    last_user_turn_at: float = field(default_factory=time.monotonic)
     stage_started_at: float = field(default_factory=time.monotonic)
     advancing: bool = False
-    intro_nudge_sent: bool = False
-    past_experience_nudge_sent: bool = False
 
     def time_in_stage(self) -> float:
         return time.monotonic() - self.stage_started_at
 
-    def time_since_user_turn(self) -> float:
-        return time.monotonic() - self.last_user_turn_at
-
-    def record_user_turn(self, transcript: str) -> None:
+    def record_user_turn(self) -> None:
         self.user_turns += 1
-        self.total_words += len(transcript.split())
-        self.last_user_turn_at = time.monotonic()
 
     def should_advance(self) -> bool:
-        if self.stage == InterviewStage.SELF_INTRO:
-            return self.user_turns >= 1 and self.total_words >= MIN_INTRO_WORDS_TO_ADVANCE
-        if self.stage == InterviewStage.PAST_EXPERIENCE:
-            return (
-                self.user_turns >= MIN_PAST_EXPERIENCE_TURNS
-                and self.total_words >= MIN_PAST_EXPERIENCE_WORDS
-            )
-        return False
+        return self.user_turns >= TURNS_TO_ADVANCE
 
     def advance(self) -> InterviewStage:
         if self.stage == InterviewStage.SELF_INTRO:
@@ -131,12 +101,7 @@ class InterviewStateMachine:
         elif self.stage == InterviewStage.PAST_EXPERIENCE:
             self.stage = InterviewStage.COMPLETE
         self.user_turns = 0
-        self.total_words = 0
-        now = time.monotonic()
-        self.stage_started_at = now
-        self.last_user_turn_at = now
-        self.intro_nudge_sent = False
-        self.past_experience_nudge_sent = False
+        self.stage_started_at = time.monotonic()
         logger.info("Interview stage advanced to %s", self.stage.value)
         return self.stage
 
@@ -147,12 +112,7 @@ class InterviewAgent(Agent):
         super().__init__(instructions=STAGE_PROMPTS[state.stage])
 
 
-async def _advance_stage(
-    session: AgentSession,
-    agent: InterviewAgent,
-    *,
-    reason: str,
-) -> None:
+async def _advance_stage(session: AgentSession, agent: InterviewAgent) -> None:
     """Advance once, update the system instructions, and speak the next prompt."""
     state = agent.state
     if state.advancing or state.stage == InterviewStage.COMPLETE:
@@ -160,14 +120,12 @@ async def _advance_stage(
 
     state.advancing = True
     try:
-        logger.info("Advancing from %s because %s", state.stage.value, reason)
         next_stage = state.advance()
         await agent.update_instructions(STAGE_PROMPTS[next_stage])
         await session.generate_reply(
             instructions=(
-                "Transition smoothly and conversationally into the next part. Use this "
-                "message as the substance, but sound natural instead of scripted: "
-                f"{STAGE_OPENINGS[next_stage]}"
+                "Say exactly this stage transition prompt, naturally and without "
+                f"adding extra questions: {STAGE_OPENINGS[next_stage]}"
             ),
             allow_interruptions=next_stage != InterviewStage.COMPLETE,
         )
@@ -258,23 +216,16 @@ async def entrypoint(ctx: JobContext) -> None:
         transcript = (getattr(event, "transcript", "") or "").strip()
         if not transcript:
             return
-        state.record_user_turn(transcript)
+        state.record_user_turn()
         logger.info(
-            "Candidate final transcript in %s (turn %s, %s words, %.1fs): %s",
+            "Candidate final transcript in %s (turn %s, %.1fs): %s",
             state.stage.value,
             state.user_turns,
-            state.total_words,
             state.time_in_stage(),
             transcript,
         )
         if state.should_advance():
-            asyncio.create_task(
-                _advance_stage(
-                    session,
-                    interview_agent,
-                    reason="candidate gave enough detail for this stage",
-                )
-            )
+            asyncio.create_task(_advance_stage(session, interview_agent))
 
     try:
         await session.start(room=ctx.room, agent=interview_agent)
@@ -292,70 +243,11 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     async def timeout_watchdog() -> None:
-        while state.stage != InterviewStage.COMPLETE:
+        while state.stage == InterviewStage.SELF_INTRO:
             await asyncio.sleep(5)
-
-            if state.advancing:
-                continue
-
-            if (
-                state.stage == InterviewStage.SELF_INTRO
-                and not state.intro_nudge_sent
-                and state.time_since_user_turn() >= INTRO_NUDGE_SECONDS
-                and not state.should_advance()
-            ):
-                state.intro_nudge_sent = True
-                logger.info("Sending self-introduction nudge after quiet/short response")
-                await session.generate_reply(
-                    instructions=(
-                        "The candidate has been quiet or gave a very short intro. "
-                        "Gently invite them to add a little more about their background, "
-                        "current focus, or target role. Keep it under two sentences."
-                    ),
-                    allow_interruptions=True,
-                )
-                continue
-
-            if (
-                state.stage == InterviewStage.SELF_INTRO
-                and state.time_in_stage() >= INTRO_FORCE_ADVANCE_SECONDS
-            ):
-                logger.warning("Self-introduction fallback advancing after timeout")
-                await _advance_stage(
-                    session,
-                    interview_agent,
-                    reason="self-introduction timeout fallback",
-                )
-                continue
-
-            if (
-                state.stage == InterviewStage.PAST_EXPERIENCE
-                and not state.past_experience_nudge_sent
-                and state.time_since_user_turn() >= PAST_EXPERIENCE_NUDGE_SECONDS
-                and not state.should_advance()
-            ):
-                state.past_experience_nudge_sent = True
-                logger.info("Sending past-experience nudge after inactivity")
-                await session.generate_reply(
-                    instructions=(
-                        "The project discussion has stalled. Ask one specific, "
-                        "helpful follow-up about the candidate's ownership, a challenge "
-                        "they faced, or the impact of the work. Do not wrap up yet."
-                    ),
-                    allow_interruptions=True,
-                )
-                continue
-
-            if (
-                state.stage == InterviewStage.PAST_EXPERIENCE
-                and state.time_in_stage() >= PAST_EXPERIENCE_WRAP_SECONDS
-            ):
-                logger.warning("Past-experience fallback wrapping after timeout")
-                await _advance_stage(
-                    session,
-                    interview_agent,
-                    reason="past-experience timeout fallback",
-                )
+            if state.time_in_stage() >= INTRO_TIMEOUT_SECONDS and state.user_turns == 0:
+                logger.warning("Self-introduction timed out; advancing to past experience")
+                await _advance_stage(session, interview_agent)
                 return
 
     asyncio.create_task(timeout_watchdog())

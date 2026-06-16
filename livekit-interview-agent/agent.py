@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions
-from livekit.plugins import deepgram, elevenlabs, google, silero
+from livekit.plugins import deepgram, elevenlabs, openai, silero
 
 load_dotenv()
 load_dotenv(".env.local")
@@ -52,10 +52,11 @@ STAGE_PROMPTS = {
     ),
     InterviewStage.PAST_EXPERIENCE: (
         "You are a professional, friendly AI interviewer running a mock interview. "
-        "You are in the PAST EXPERIENCE / PROJECT DISCUSSION stage. The stage "
-        "question has already been asked, so do not repeat it. Listen to the "
-        "candidate's answer and respond with a concise encouraging reaction. You "
-        "may ask one short clarifying question if it adds value."
+        "You are in the PAST EXPERIENCE / PROJECT DISCUSSION stage. "
+        "Your goal is to have a short but meaningful conversation about the candidate's project or experience. "
+        "Ask follow-up questions about their role, challenges they faced, what they learned, and the impact of the project. "
+        "Do NOT end the interview after one short answer. Keep the conversation going naturally for at least 3-4 turns before wrapping up. "
+        "Only move toward ending when the candidate has given real substance about their experience."
     ),
     InterviewStage.COMPLETE: (
         "The mock interview is complete. Thank the candidate warmly and briefly. "
@@ -95,7 +96,9 @@ class InterviewStateMachine:
         self.user_turns += 1
 
     def should_advance(self) -> bool:
-        return self.user_turns >= TURNS_TO_ADVANCE
+        min_turns = 3
+        min_time = 25  # seconds
+        return self.user_turns >= min_turns and self.time_in_stage() >= min_time
 
     def advance(self) -> InterviewStage:
         if self.stage == InterviewStage.SELF_INTRO:
@@ -179,7 +182,6 @@ async def entrypoint(ctx: JobContext) -> None:
     _log_required_configuration()
     deepgram_api_key = _require_env("DEEPGRAM_API_KEY")
     elevenlabs_api_key = _require_env("ELEVENLABS_API_KEY")
-    _require_env("GOOGLE_API_KEY")
 
     try:
         await ctx.connect()
@@ -202,7 +204,11 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         # LLM: transcribed text + current stage instructions -> interviewer text. Gemini
         # only needs GOOGLE_API_KEY, so it stays budget-friendly for this demo.
-        llm=google.LLM(model=GEMINI_MODEL),
+        llm=openai.LLM(
+    model="llama-3.3-70b-versatile",
+    base_url="https://api.groq.com/openai/v1",
+    api_key=os.getenv("GROQ_API_KEY"),
+),
         # TTS: interviewer text -> speech published back into LiveKit using ElevenLabs.
         tts=elevenlabs.TTS(model=ELEVENLABS_MODEL, api_key=elevenlabs_api_key),
     )
@@ -238,9 +244,8 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.generate_reply(
         instructions=(
-            "Greet the candidate by saying exactly this opening prompt, naturally: "
-            f"{STAGE_OPENINGS[InterviewStage.SELF_INTRO]}"
-        ),
+        "Greet the candidate naturally and warmly, then ask them to introduce themselves and share a bit about their background. Do not use any scripted or robotic phrases. Sound like a friendly human interviewer."
+    ),
         allow_interruptions=True,
     )
 

@@ -1,84 +1,104 @@
 # LiveKit AI Mock Interview Agent
 
-A real-time AI mock interview demo built with LiveKit Agents and Gemini. The agent guides a candidate through two interview stages:
+A real-time voice mock interview agent built with **LiveKit Agents**, **Deepgram STT**, **Groq**, and **ElevenLabs TTS**. The agent runs a two-stage interview:
 
 1. Self Introduction
 2. Past Experience / Project Discussion
 
-The project demonstrates a simple staged interview workflow with clean transition logic and a timeout fallback so the conversation can continue even if the normal stage-completion logic is not triggered.
+It uses a free-tier-friendly voice pipeline so a candidate can speak in a LiveKit room and hear the agent respond as an audio participant.
 
-## Features
+## What changed
 
-- LiveKit voice agent worker
-- Gemini-powered interview responses
-- Two-stage interview flow:
-  - `SELF_INTRO`
-  - `PAST_EXPERIENCE`
-  - `COMPLETE`
-- Smooth transition between interview stages
-- Time-based fallback for stage progression
-- Environment-based API key configuration
+The previous implementation used Google Cloud Speech-to-Text and Google Cloud Text-to-Speech, which require Google Cloud billing credentials. This version uses Groq for fast, free-tier-friendly interview reasoning and keeps speech services on providers with accessible free tiers:
 
-## Tech Stack
+- `ctx.connect()` joins the LiveKit room and subscribes to room media.
+- `silero.VAD.load()` detects when the candidate starts and stops speaking.
+- `deepgram.STT(model="nova-3")` converts candidate microphone audio to text.
+- `openai.LLM(model="llama-3.3-70b-versatile", base_url="https://api.groq.com/openai/v1")` generates interview responses through Groq's OpenAI-compatible API.
+- `elevenlabs.TTS(model="eleven_turbo_v2_5")` turns responses into speech and publishes an agent audio track back to the room.
 
-- Python 3.12
-- LiveKit Agents
-- LiveKit Google plugin
-- LiveKit Silero plugin
-- Gemini API
-- python-dotenv
-- PyAV
+The audio path is now **Deepgram STT → Groq LLM → ElevenLabs TTS**.
+
+## Required API keys
+
+Create `.env` or `.env.local` in the repository root with:
+
+```env
+LIVEKIT_URL=wss://your-livekit-project.livekit.cloud
+LIVEKIT_API_KEY=your_livekit_api_key
+LIVEKIT_API_SECRET=your_livekit_api_secret
+GROQ_API_KEY=your_groq_api_key
+DEEPGRAM_API_KEY=your_deepgram_api_key
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+```
+
+### Where to get free-tier-friendly keys
+
+- **LiveKit**: Create a free LiveKit Cloud project at <https://cloud.livekit.io>, then copy the WebSocket URL plus API key/secret from the project settings.
+- **Groq**: Create a Groq API key in the Groq Console at <https://console.groq.com/keys>. This is used only for the LLM.
+- **Deepgram**: Sign up at <https://console.deepgram.com/signup>, then create/copy an API key from the Deepgram console. This is used for Speech-to-Text.
+- **ElevenLabs**: Sign up at <https://elevenlabs.io/sign-up>, then create/copy an API key from your ElevenLabs profile or developer/API key settings. This is used for Text-to-Speech.
+
+> Free tiers and quotas can change. Check each provider dashboard for your current monthly credits/limits before running long sessions.
 
 ## Setup
 
-Create a virtual environment:
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install dependencies from the repository root:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Create a `.env` file:
-
-```env
-LIVEKIT_URL=wss://your-livekit-project.livekit.cloud
-LIVEKIT_API_KEY=your_livekit_api_key
-LIVEKIT_API_SECRET=your_livekit_api_secret
-GOOGLE_API_KEY=your_google_api_key
-```
-
-Download required model files:
+Download LiveKit plugin model files, including Silero VAD assets:
 
 ```bash
 python agent.py download-files
 ```
 
-Start the LiveKit worker:
+## Run
+
+For a local terminal test:
+
+```bash
+python agent.py console
+```
+
+For a LiveKit worker that can be dispatched to rooms:
 
 ```bash
 python agent.py start
 ```
 
-A successful startup should show:
+When the worker starts successfully, join a room from the LiveKit Agents Playground or your frontend. The agent joins as a participant, listens to the candidate microphone through Deepgram STT, uses Groq to generate the interviewer response, and speaks through ElevenLabs TTS.
 
-```txt
-registered worker
+## Interview flow
+
+- The session starts in `SELF_INTRO` and asks the candidate to introduce themself.
+- The agent starts each session with zero candidate context and does not assume the candidate's name, role, company, background, or goals.
+- The agent no longer rushes past very short introductions. It requires multiple turns and enough substance before moving on, with gentle and stronger nudges if the introduction is incomplete.
+- Turn-taking is tuned to reduce interruptions by using more conservative Deepgram endpointing plus LiveKit endpointing delays before the agent responds.
+- The transition into `PAST_EXPERIENCE` is conversational and asks for the project goal, the candidate's personal ownership, and why the work mattered.
+- The project discussion now lasts for multiple substantive candidate turns before wrapping up. Follow-ups should dig into ownership, tradeoffs, obstacles, collaboration, impact, and lessons learned instead of asking shallow generic questions.
+- The fallback watchdog is staged: gentle nudge → stronger nudge → force advance/wrap, with longer timeouts so the conversation does not end quickly.
+
+## Debugging
+
+The agent validates required environment variables at startup and logs missing keys before failing fast. It also logs room connection, session start, final user transcripts, stage transitions, timeout fallback, and LiveKit session errors.
+
+## Project files
+
+```text
+agent.py                            # Root runnable LiveKit agent
+requirements.txt                    # Python dependencies
+.env.example                        # Environment variable template
+livekit-interview-agent/agent.py     # Compatibility copy of the agent
+livekit-interview-agent/README.md    # Challenge-specific README
+livekit-interview-agent/.env.example # Compatibility env template
 ```
-
-## Interview Flow
-
-The agent begins in the self-introduction stage and asks the candidate to introduce themselves.
-
-After the candidate responds, the agent transitions into the past-experience stage and asks about a project, internship, work experience, or relevant background.
-
-If the normal transition logic does not trigger within the configured time window, the agent uses a timeout fallback to move the interview forward.
-
-## Submission Notes
-
-This project was built for the AI Engineer take-home challenge. It focuses on implementing the self-introduction and past-experience stages of an AI mock interview using LiveKit Agents, with clear stage switching and fallback behavior.

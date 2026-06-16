@@ -1,13 +1,13 @@
-"""LiveKit + Gemini two-stage voice mock interview agent.
-
-Run locally with:
-    python agent.py console
-
-Run as a LiveKit worker with:
-    python agent.py start
+#!/usr/bin/env python3
 """
+Clean LiveKit Multi-Agent Mock Interview - Ready for Submission
 
-from __future__ import annotations
+This version includes:
+- Self-Introduction and Past-Experience stages
+- Smooth multi-agent transitions using function tools
+- Time-based fallback mechanism
+- Proper turn handling to reduce cutting off
+"""
 
 import asyncio
 import enum
@@ -17,241 +17,114 @@ import time
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
-from livekit import agents
-from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions
-from livekit.plugins import deepgram, elevenlabs, google, silero
+from livekit.agents import (
+    Agent, AgentSession, JobContext, RunContext, function_tool,
+    TurnHandlingOptions, EndpointingOptions, InterruptionOptions, cli, WorkerOptions
+)
+from livekit.plugins import deepgram, elevenlabs, openai, silero
 
 load_dotenv()
-load_dotenv(".env.local")
-
+logger = logging.getLogger("mock-interview")
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("interview-agent")
-
-INTRO_TIMEOUT_SECONDS = 60
-TURNS_TO_ADVANCE = 1
-GEMINI_MODEL = "gemini-2.5-flash"
-DEEPGRAM_MODEL = "nova-3"
-ELEVENLABS_MODEL = "eleven_turbo_v2_5"
 
 
-class InterviewStage(enum.Enum):
-    SELF_INTRO = "self_intro"
-    PAST_EXPERIENCE = "past_experience"
-    COMPLETE = "complete"
-
-
-STAGE_PROMPTS = {
-    InterviewStage.SELF_INTRO: (
-        "You are a professional, friendly AI interviewer running a mock interview. "
-        "You are in the SELF INTRODUCTION stage. The opening question has already "
-        "been asked, so do not repeat it. Listen to the candidate's introduction "
-        "and respond with a brief warm acknowledgement in one or two sentences. "
-        "Do not ask follow-up questions yet."
-    ),
-    InterviewStage.PAST_EXPERIENCE: (
-        "You are a professional, friendly AI interviewer running a mock interview. "
-        "You are in the PAST EXPERIENCE / PROJECT DISCUSSION stage. The stage "
-        "question has already been asked, so do not repeat it. Listen to the "
-        "candidate's answer and respond with a concise encouraging reaction. You "
-        "may ask one short clarifying question if it adds value."
-    ),
-    InterviewStage.COMPLETE: (
-        "The mock interview is complete. Thank the candidate warmly and briefly. "
-        "Wish them well in their job search. Do not ask another interview question."
-    ),
-}
-
-STAGE_OPENINGS = {
-    InterviewStage.SELF_INTRO: (
-        "Hello, welcome to your mock interview. Could you start by introducing "
-        "yourself and telling me a bit about your background?"
-    ),
-    InterviewStage.PAST_EXPERIENCE: (
-        "Thank you for that introduction. Now, could you tell me about a past "
-        "experience or project you're proud of, and what your role was?"
-    ),
-    InterviewStage.COMPLETE: (
-        "That wraps up our mock interview. Thank you so much for your time. "
-        "You did a great job, and I wish you the best with your job search."
-    ),
-}
+INTRO_TIMEOUT = 60
+PAST_TIMEOUT = 90
 
 
 @dataclass
-class InterviewStateMachine:
-    """Small state machine for the two required interview stages."""
-
-    stage: InterviewStage = InterviewStage.SELF_INTRO
-    user_turns: int = 0
-    stage_started_at: float = field(default_factory=time.monotonic)
-    advancing: bool = False
-
-    def time_in_stage(self) -> float:
-        return time.monotonic() - self.stage_started_at
-
-    def record_user_turn(self) -> None:
-        self.user_turns += 1
-
-    def should_advance(self) -> bool:
-        return self.user_turns >= TURNS_TO_ADVANCE
-
-    def advance(self) -> InterviewStage:
-        if self.stage == InterviewStage.SELF_INTRO:
-            self.stage = InterviewStage.PAST_EXPERIENCE
-        elif self.stage == InterviewStage.PAST_EXPERIENCE:
-            self.stage = InterviewStage.COMPLETE
-        self.user_turns = 0
-        self.stage_started_at = time.monotonic()
-        logger.info("Interview stage advanced to %s", self.stage.value)
-        return self.stage
+class InterviewContext:
+    stage_start_time: float = field(default_factory=time.time)
 
 
-class InterviewAgent(Agent):
-    def __init__(self, state: InterviewStateMachine) -> None:
-        self.state = state
-        super().__init__(instructions=STAGE_PROMPTS[state.stage])
-
-
-async def _advance_stage(session: AgentSession, agent: InterviewAgent) -> None:
-    """Advance once, update the system instructions, and speak the next prompt."""
-    state = agent.state
-    if state.advancing or state.stage == InterviewStage.COMPLETE:
-        return
-
-    state.advancing = True
-    try:
-        next_stage = state.advance()
-        await agent.update_instructions(STAGE_PROMPTS[next_stage])
-        await session.generate_reply(
+class SelfIntroductionAgent(Agent):
+    def __init__(self, ctx: InterviewContext):
+        super().__init__(
             instructions=(
-                "Say exactly this stage transition prompt, naturally and without "
-                f"adding extra questions: {STAGE_OPENINGS[next_stage]}"
-            ),
-            allow_interruptions=next_stage != InterviewStage.COMPLETE,
+                "You are a professional and friendly AI mock interviewer. "
+                "CURRENT STAGE: SELF-INTRODUCTION. "
+                "Greet the candidate warmly and ask them to introduce themselves and give a quick overview of their background. "
+                "Keep responses encouraging but concise. Do not dive deep into specific experiences yet. "
+                "When you have enough basic information, call the move_to_past_experience tool to transition."
+            )
         )
-    finally:
-        state.advancing = False
+        self.ctx = ctx
 
-
-def _require_env(name: str) -> str:
-    """Return a required environment value or raise a helpful startup error."""
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(
-            f"Missing {name}. Add it to .env/.env.local before starting the voice agent."
-        )
-    return value
-
-
-def _log_required_configuration() -> None:
-    missing = [
-        name
-        for name in (
-            "LIVEKIT_URL",
-            "LIVEKIT_API_KEY",
-            "LIVEKIT_API_SECRET",
-            "DEEPGRAM_API_KEY",
-            "ELEVENLABS_API_KEY",
-            "GOOGLE_API_KEY",
-        )
-        if not os.getenv(name)
-    ]
-    if missing:
-        logger.error("Missing required environment variables: %s", ", ".join(missing))
-    else:
-        logger.info(
-            "Required LiveKit, Deepgram, ElevenLabs, and Gemini keys are configured"
+    async def on_enter(self):
+        logger.info("=== SELF-INTRODUCTION stage ===")
+        self.ctx.stage_start_time = time.time()
+        asyncio.create_task(self._timeout_watcher(INTRO_TIMEOUT))
+        await self.session.say(
+            "Hello! Thank you for joining this mock interview. "
+            "Could you start by introducing yourself and telling me a bit about your background?"
         )
 
+    async def _timeout_watcher(self, timeout: int):
+        await asyncio.sleep(timeout)
+        if self.ctx.stage_start_time + timeout <= time.time():
+            logger.warning("Time-based fallback triggered")
+            await self.session.say("To keep us on time, let's move into your past experience.")
+            next_agent = PastExperienceAgent(self.ctx)
+            await self.session.update_agent(next_agent)
 
-async def entrypoint(ctx: JobContext) -> None:
-    """LiveKit worker entrypoint.
+    @function_tool
+    async def move_to_past_experience(self, context: RunContext[InterviewContext]):
+        next_agent = PastExperienceAgent(context.userdata)
+        return next_agent, "Thank you. Now let's talk about a past project or role you're proud of."
 
-    Audio pipeline: the room audio is subscribed by `ctx.connect()`. Silero VAD
-    detects candidate speech boundaries, Deepgram converts candidate speech to
-    text, Gemini produces the interviewer response, and ElevenLabs publishes the
-    response back to the room as an agent audio track. In short:
-    Deepgram STT → Gemini LLM → ElevenLabs TTS.
-    """
 
-    _log_required_configuration()
-    deepgram_api_key = _require_env("DEEPGRAM_API_KEY")
-    elevenlabs_api_key = _require_env("ELEVENLABS_API_KEY")
-    _require_env("GOOGLE_API_KEY")
+class PastExperienceAgent(Agent):
+    def __init__(self, ctx: InterviewContext):
+        super().__init__(
+            instructions=(
+                "You are in the PAST EXPERIENCE stage. "
+                "Have a natural conversation about one of the candidate's past projects or roles. "
+                "Ask about their role, challenges they faced, what they learned, and the impact. "
+                "Keep it conversational."
+            )
+        )
+        self.ctx = ctx
 
-    try:
-        await ctx.connect()
-        logger.info("Connected to LiveKit room: %s", ctx.room.name)
-    except Exception:
-        logger.exception("Failed to connect to LiveKit room")
-        raise
-    state = InterviewStateMachine()
-    interview_agent = InterviewAgent(state)
+    async def on_enter(self):
+        logger.info("=== PAST EXPERIENCE stage ===")
+        self.ctx.stage_start_time = time.time()
+        asyncio.create_task(self._timeout_watcher(PAST_TIMEOUT))
+
+    async def _timeout_watcher(self, timeout: int):
+        await asyncio.sleep(timeout)
+        if self.ctx.stage_start_time + timeout <= time.time():
+            await self.session.say(
+                "We've had a good discussion. Thank you for sharing your experience. "
+                "That wraps up our mock interview. You did well."
+            )
+
+    @function_tool
+    async def conclude_interview(self, context: RunContext[InterviewContext]):
+        await self.session.say(
+            "Thank you for your time. You shared some great examples. Good luck with your interviews!"
+        )
+
+
+async def entrypoint(ctx: JobContext):
+    interview_ctx = InterviewContext()
 
     session = AgentSession(
-        # Voice Activity Detection: lets the agent know when the user starts and
-        # stops speaking so complete turns are sent through the pipeline.
         vad=silero.VAD.load(),
-        # STT: candidate microphone audio -> text using Deepgram's free-tier-friendly API.
-        stt=deepgram.STT(
-            model=DEEPGRAM_MODEL,
-            language="en-US",
-            api_key=deepgram_api_key,
+        stt=deepgram.STT(model="nova-3", language="en-US"),
+        llm=openai.LLM(
+            model="llama-3.3-70b-versatile",
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.getenv("GROQ_API_KEY"),
         ),
-        # LLM: transcribed text + current stage instructions -> interviewer text. Gemini
-        # only needs GOOGLE_API_KEY, so it stays budget-friendly for this demo.
-        llm=google.LLM(model=GEMINI_MODEL),
-        # TTS: interviewer text -> speech published back into LiveKit using ElevenLabs.
-        tts=elevenlabs.TTS(model=ELEVENLABS_MODEL, api_key=elevenlabs_api_key),
+        tts=elevenlabs.TTS(model="eleven_turbo_v2_5"),
+        turn_handling=TurnHandlingOptions(
+            endpointing=EndpointingOptions(mode="fixed", min_delay=1.0, max_delay=4.0),
+            interruption=InterruptionOptions(mode="adaptive", min_duration=0.6),
+        ),
     )
 
-    @session.on("error")
-    def _on_error(event) -> None:
-        logger.error("LiveKit agent session error: %s", event)
-
-    @session.on("user_input_transcribed")
-    def _on_user_input_transcribed(event) -> None:
-        if not getattr(event, "is_final", False) or state.stage == InterviewStage.COMPLETE:
-            return
-        transcript = (getattr(event, "transcript", "") or "").strip()
-        if not transcript:
-            return
-        state.record_user_turn()
-        logger.info(
-            "Candidate final transcript in %s (turn %s, %.1fs): %s",
-            state.stage.value,
-            state.user_turns,
-            state.time_in_stage(),
-            transcript,
-        )
-        if state.should_advance():
-            asyncio.create_task(_advance_stage(session, interview_agent))
-
-    try:
-        await session.start(room=ctx.room, agent=interview_agent)
-        logger.info("Voice session started with Deepgram STT → Gemini → ElevenLabs TTS")
-    except Exception:
-        logger.exception("Failed to start the LiveKit voice session")
-        raise
-
-    await session.generate_reply(
-        instructions=(
-            "Greet the candidate by saying exactly this opening prompt, naturally: "
-            f"{STAGE_OPENINGS[InterviewStage.SELF_INTRO]}"
-        ),
-        allow_interruptions=True,
-    )
-
-    async def timeout_watchdog() -> None:
-        while state.stage == InterviewStage.SELF_INTRO:
-            await asyncio.sleep(5)
-            if state.time_in_stage() >= INTRO_TIMEOUT_SECONDS and state.user_turns == 0:
-                logger.warning("Self-introduction timed out; advancing to past experience")
-                await _advance_stage(session, interview_agent)
-                return
-
-    asyncio.create_task(timeout_watchdog())
+    await session.start(agent=SelfIntroductionAgent(interview_ctx), room=ctx.room)
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

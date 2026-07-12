@@ -40,7 +40,8 @@ The LLM is configured through LiveKit's `openai.LLM` adapter using Groq's OpenAI
 - Groq-hosted `llama-3.3-70b-versatile` interview reasoning
 - ElevenLabs `eleven_turbo_v2_5` speech synthesis
 - Time-based fallbacks to keep the interview moving
-- Adaptive interruption handling and fixed endpointing controls
+- Patient fixed endpointing to reduce mid-answer cutoffs
+- Interruption handling disabled for calmer mock-interview flow
 - Local console mode and LiveKit worker mode
 - Clear startup validation for required provider keys
 - Automated unit tests and GitHub Actions CI
@@ -98,7 +99,7 @@ pip install -r requirements.txt
 Download LiveKit plugin model files, including the Silero VAD assets:
 
 ```bash
-python agent.py download-files
+python -m livekit.agents download-files
 ```
 
 ## Run
@@ -121,7 +122,7 @@ After the worker starts, join a room through the LiveKit Agents Playground or a 
 
 ### 1. Self introduction
 
-`SelfIntroductionAgent` welcomes the candidate and asks for a brief introduction. Its instructions keep this stage concise and prevent it from diving too deeply into project details.
+`SelfIntroductionAgent` welcomes the candidate and asks for a brief introduction. Its instructions keep this stage concise, avoid diving too deeply into project details, and ask one short follow-up if the candidate gives only a very brief introduction.
 
 The agent can call `move_to_past_experience` to switch to the next interviewer. A 60-second timeout also advances the session if the stage stalls.
 
@@ -135,11 +136,11 @@ A 90-second fallback closes the discussion with a short, encouraging conclusion 
 
 The session uses:
 
-- Fixed endpointing with a 1–4 second delay window
-- Adaptive interruption handling
-- A minimum interruption duration of 0.6 seconds
+- Fixed endpointing with a 2–6 second delay window
+- Disabled preemptive generation, so the agent waits for turn completion before responding
+- Disabled interruption handling during the agent's speech, which makes console testing less likely to feel like the interviewer is cutting off the candidate
 
-These settings help the interviewer avoid cutting off the candidate while keeping the conversation responsive.
+These settings trade a little responsiveness for a calmer mock-interview experience and better tolerance for natural pauses.
 
 ## Testing
 

@@ -6,7 +6,7 @@ This version includes:
 - Self-Introduction and Past-Experience stages
 - Smooth multi-agent transitions using function tools
 - Time-based fallback mechanism
-- Proper turn handling to reduce cutting off
+- Patient turn handling to reduce cutting off candidates mid-answer
 """
 
 import asyncio
@@ -41,6 +41,9 @@ DEEPGRAM_MODEL = "nova-3"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 ELEVENLABS_MODEL = "eleven_turbo_v2_5"
+ENDPOINTING_MIN_DELAY = 2.0
+ENDPOINTING_MAX_DELAY = 6.0
+MIN_INTERRUPTION_DURATION = 1.0
 
 
 def _require_env(name: str) -> str:
@@ -49,6 +52,13 @@ def _require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing {name}. Add it to .env before starting the agent.")
     return value
+
+
+async def _update_agent(session: AgentSession, next_agent: Agent) -> None:
+    """Switch agents across LiveKit versions with sync or async handoff APIs."""
+    handoff_result = session.update_agent(next_agent)
+    if inspect.isawaitable(handoff_result):
+        await handoff_result
 
 
 @dataclass
@@ -64,7 +74,9 @@ class SelfIntroductionAgent(Agent):
                 "CURRENT STAGE: SELF-INTRODUCTION. "
                 "Greet the candidate warmly and ask them to introduce themselves and give a quick overview of their background. "
                 "Keep responses encouraging but concise. Do not dive deep into specific experiences yet. "
-                "When you have enough basic information, call the move_to_past_experience tool to transition."
+                "If the candidate gives only a short introduction, ask one brief follow-up before transitioning. "
+                "Only call the move_to_past_experience tool after the candidate has clearly finished their self-introduction. "
+                "Never interrupt while the candidate is still speaking or collecting their thoughts."
             )
         )
         self.ctx = ctx
@@ -83,14 +95,11 @@ class SelfIntroductionAgent(Agent):
         if self.ctx.stage_start_time + timeout <= time.time():
             logger.warning("Time-based fallback triggered")
             await self.session.say("To keep us on time, let's move into your past experience.")
-            next_agent = PastExperienceAgent(self.ctx)
-            handoff_result = self.session.update_agent(next_agent)
-            if inspect.isawaitable(handoff_result):
-                await handoff_result
+            await _update_agent(self.session, PastExperienceAgent(self.ctx))
 
     @function_tool
     async def move_to_past_experience(self, context: RunContext[InterviewContext]):
-        next_agent = PastExperienceAgent(context.userdata)
+        next_agent = PastExperienceAgent(self.ctx)
         return next_agent, "Thank you. Now let's talk about a past project or role you're proud of."
 
 
@@ -101,6 +110,7 @@ class PastExperienceAgent(Agent):
                 "You are in the PAST EXPERIENCE stage. "
                 "Have a natural conversation about one of the candidate's past projects or roles. "
                 "Ask about their role, challenges they faced, what they learned, and the impact. "
+                "Wait for complete answers before responding, especially if the candidate pauses mid-thought. "
                 "Keep it conversational."
             )
         )
@@ -133,6 +143,7 @@ async def entrypoint(ctx: JobContext):
     elevenlabs_api_key = _require_env("ELEVENLABS_API_KEY")
 
     session = AgentSession(
+        userdata=interview_ctx,
         vad=silero.VAD.load(),
         stt=deepgram.STT(
             model=DEEPGRAM_MODEL,
@@ -149,8 +160,16 @@ async def entrypoint(ctx: JobContext):
             api_key=elevenlabs_api_key,
         ),
         turn_handling=TurnHandlingOptions(
-            endpointing=EndpointingOptions(mode="fixed", min_delay=1.0, max_delay=4.0),
-            interruption=InterruptionOptions(mode="adaptive", min_duration=0.6),
+            endpointing=EndpointingOptions(
+                mode="fixed",
+                min_delay=ENDPOINTING_MIN_DELAY,
+                max_delay=ENDPOINTING_MAX_DELAY,
+            ),
+            interruption=InterruptionOptions(
+                enabled=False,
+                min_duration=MIN_INTERRUPTION_DURATION,
+            ),
+            preemptive_generation={"enabled": False},
         ),
     )
 

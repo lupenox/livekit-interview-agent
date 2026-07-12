@@ -10,6 +10,7 @@ This version includes:
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -83,7 +84,9 @@ class SelfIntroductionAgent(Agent):
             logger.warning("Time-based fallback triggered")
             await self.session.say("To keep us on time, let's move into your past experience.")
             next_agent = PastExperienceAgent(self.ctx)
-            await self.session.update_agent(next_agent)
+            handoff_result = self.session.update_agent(next_agent)
+            if inspect.isawaitable(handoff_result):
+                await handoff_result
 
     @function_tool
     async def move_to_past_experience(self, context: RunContext[InterviewContext]):

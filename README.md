@@ -48,6 +48,7 @@ The LLM is configured through LiveKit's `openai.LLM` adapter using Groq's OpenAI
 - Next.js interview setup and browser voice-room experience
 - Short-lived LiveKit token generation through a server-side route
 - In-interview API budget monitor with low-credit warnings
+- One-command development launcher for the backend and frontend
 - Clear startup validation for required provider keys
 - Automated Python and frontend CI checks
 
@@ -127,11 +128,29 @@ To run the worker in production mode:
 python agent.py start
 ```
 
-## Run the Next.js frontend
+## Run everything with one command
+
+After the Python and frontend setup has been completed once, start the LiveKit worker and Next.js frontend together from the repository root:
+
+```bash
+bash run-dev.sh
+```
+
+The launcher:
+
+- Uses the currently active virtual environment when available
+- Otherwise detects `.venv/` or the compatibility copy at `livekit-interview-agent/.venv/`
+- Runs `npm install` automatically when `frontend/node_modules/` is missing
+- Starts `python agent.py dev` and `npm run dev` in the same terminal
+- Stops both processes when either exits or when you press `Ctrl+C`
+
+The site is available at `http://localhost:3000`. Keep this terminal open while using the interview.
+
+## Run the Next.js frontend manually
 
 The `frontend/` directory contains a separate Next.js application. Next.js renders the React interface and provides small server-side endpoints for LiveKit room tokens and provider usage data; the Python process remains the interview agent.
 
-In a second terminal:
+To run the frontend separately in a second terminal:
 
 ```bash
 cd frontend
@@ -160,7 +179,7 @@ DEEPGRAM_LOW_BALANCE=5
 DEEPGRAM_CRITICAL_BALANCE=1
 ```
 
-Open `http://localhost:3000`, enter a name and target role, and begin the interview. Keep `python agent.py dev` running in the other terminal.
+Open `http://localhost:3000`, enter a name and target role, and begin the interview. Keep `python agent.py dev` running in the other terminal when using the manual two-terminal workflow.
 
 ## API budget monitor
 
@@ -222,6 +241,12 @@ npm run lint
 npm run build
 ```
 
+Validate the development launcher syntax with:
+
+```bash
+bash -n run-dev.sh
+```
+
 The Python tests use in-process provider and LiveKit fakes, so they do not make network requests or consume API credits. They verify:
 
 - Required API-key validation
@@ -231,7 +256,7 @@ The Python tests use in-process provider and LiveKit fakes, so they do not make 
 - Groq, Deepgram, ElevenLabs, Silero, and turn-handling configuration
 - Session startup with the expected room and initial agent
 
-GitHub Actions installs the real Python and JavaScript dependencies, imports and compiles the agent, lints the frontend, and produces a production Next.js build.
+GitHub Actions installs the real Python and JavaScript dependencies, imports and compiles the agent, validates the launcher, lints the frontend, and produces a production Next.js build.
 
 ## Architecture notes
 
@@ -244,17 +269,18 @@ Next.js is not an ORM. It is the full-stack React web framework used for the bro
 ## Project structure
 
 ```text
-agent.py                              # Main LiveKit worker and interview agents
-requirements.txt                      # Python dependencies
-tests/test_agent.py                   # Mock-isolated functional unit tests
-frontend/                             # Next.js browser experience
-frontend/app/api/token/route.ts       # Short-lived LiveKit participant tokens
-frontend/app/api/credits/route.ts     # Sanitized provider usage aggregation
+agent.py                               # Main LiveKit worker and interview agents
+run-dev.sh                             # One-command backend and frontend launcher
+requirements.txt                       # Python dependencies
+tests/test_agent.py                    # Mock-isolated functional unit tests
+frontend/                              # Next.js browser experience
+frontend/app/api/token/route.ts        # Short-lived LiveKit participant tokens
+frontend/app/api/credits/route.ts      # Sanitized provider usage aggregation
 frontend/components/credits-health.tsx # In-interview API budget widget
-.github/workflows/tests.yml           # Python dependency, import, compile, and test CI
-.github/workflows/frontend.yml        # Frontend lint and production-build CI
-.env.example                          # Python agent environment template
-livekit-interview-agent/              # Challenge-specific compatibility copy
+.github/workflows/tests.yml            # Python dependency, import, compile, and test CI
+.github/workflows/frontend.yml         # Frontend lint and production-build CI
+.env.example                           # Python agent environment template
+livekit-interview-agent/               # Challenge-specific compatibility copy
 ```
 
 ## Security

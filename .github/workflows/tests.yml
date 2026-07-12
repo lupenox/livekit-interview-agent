@@ -35,5 +35,8 @@ jobs:
       - name: Compile source and tests
         run: python -m compileall -q agent.py tests
 
+      - name: Validate development launcher
+        run: bash -n run-dev.sh
+
       - name: Run unit tests
         run: python -m unittest -v tests.test_agent

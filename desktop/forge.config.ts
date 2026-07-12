@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
@@ -12,6 +13,17 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'mockmate',
+    extraResource: [
+      path.resolve('resources/agent'),
+      path.resolve('resources/frontend'),
+      path.resolve('resources/node'),
+      path.resolve('resources/manifest.json'),
+    ],
+    ignore: [
+      /^\/resources($|\/)/,
+      /^\/out($|\/)/,
+      /^\/\.build($|\/)/,
+    ],
   },
   rebuildConfig: {},
   makers: [

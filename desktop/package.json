@@ -1,0 +1,36 @@
+{
+  "name": "mockmate-desktop",
+  "productName": "MockMate",
+  "version": "0.1.0",
+  "description": "Private desktop mock interview client powered by user-supplied API credentials.",
+  "author": "Lupenox Systems",
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "build:sidecars": "node scripts/build-sidecars.mjs",
+    "package": "npm run build:sidecars && electron-forge package",
+    "make": "npm run build:sidecars && electron-forge make",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-deb": "7.11.2",
+    "@electron-forge/maker-rpm": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
+    "@electron-forge/plugin-fuses": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "@electron-forge/shared-types": "7.11.2",
+    "@electron/fuses": "1.8.0",
+    "@types/electron-squirrel-startup": "1.0.2",
+    "@types/node": "26.1.1",
+    "electron": "43.1.0",
+    "typescript": "7.0.2",
+    "vite": "8.1.4"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "1.0.1",
+    "livekit-server-sdk": "2.17.0"
+  }
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://localhost:* ws://127.0.0.1:* https://api.groq.com https://api.deepgram.com https://api.elevenlabs.io https://*.livekit.cloud;" />
+    <title>MockMate Setup</title>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="intro">
+        <div class="eyebrow">MockMate Desktop</div>
+        <h1>Your private AI interview room.</h1>
+        <p>Your provider credentials stay on this computer. MockMate uses them only to start your local interview session.</p>
+        <div class="privacy-card">
+          <strong>Bring your own providers</strong>
+          <span>LiveKit · Groq · Deepgram · ElevenLabs</span>
+        </div>
+      </section>
+
+      <section class="setup-card">
+        <div class="card-heading">
+          <div><span>Step 1</span><h2>Connect your accounts</h2></div>
+          <button id="clear-button" type="button" class="link-button">Clear saved</button>
+        </div>
+
+        <form id="credential-form">
+          <label>LiveKit URL<input name="livekitUrl" type="url" required placeholder="wss://your-project.livekit.cloud" /></label>
+          <div class="two-column">
+            <label>LiveKit API key<input name="livekitApiKey" type="password" required autocomplete="off" /></label>
+            <label>LiveKit API secret<input name="livekitApiSecret" type="password" required autocomplete="off" /></label>
+          </div>
+          <label>Groq API key<input name="groqApiKey" type="password" required autocomplete="off" /></label>
+          <label>Deepgram API key<input name="deepgramApiKey" type="password" required autocomplete="off" /></label>
+          <label>ElevenLabs API key<input name="elevenlabsApiKey" type="password" required autocomplete="off" /></label>
+
+          <label class="remember-row">
+            <input id="remember" type="checkbox" />
+            <span><strong>Remember credentials</strong><small id="remember-copy">Encrypt them using your operating system's credential storage.</small></span>
+          </label>
+
+          <div id="test-results" class="test-results"></div>
+          <div id="message" class="message" data-kind="info">Enter your credentials to continue.</div>
+
+          <div class="actions">
+            <button id="test-button" type="button" class="secondary-button">Test credentials</button>
+            <button type="submit" class="primary-button">Save and launch MockMate</button>
+          </div>
+        </form>
+
+        <details class="logs-panel">
+          <summary>Service logs</summary>
+          <pre id="service-log"></pre>
+        </details>
+      </section>
+    </main>
+    <script type="module" src="/src/renderer.ts"></script>
+  </body>
+</html>

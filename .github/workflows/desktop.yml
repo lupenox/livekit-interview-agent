@@ -1,0 +1,45 @@
+name: Desktop
+
+on:
+  push:
+    branches:
+      - main
+      - "desktop/**"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "frontend/next.config.ts"
+      - "agent.py"
+      - "requirements.txt"
+      - ".github/workflows/desktop.yml"
+      - ".github/workflows/desktop-package.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install desktop dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Type-check Electron app
+        run: npm run typecheck
+
+      - name: Check sidecar build script syntax
+        run: node --check scripts/build-sidecars.mjs

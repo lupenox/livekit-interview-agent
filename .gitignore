@@ -55,3 +55,8 @@ livekit-interview-agent/.env.env
 **/.env.local
 .env
 .venv/
+
+# Desktop packaging output
+desktop/.build/
+desktop/out/
+desktop/resources/

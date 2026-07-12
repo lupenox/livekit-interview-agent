@@ -47,6 +47,7 @@ The LLM is configured through LiveKit's `openai.LLM` adapter using Groq's OpenAI
 - Local console mode and LiveKit worker mode
 - Next.js interview setup and browser voice-room experience
 - Short-lived LiveKit token generation through a server-side route
+- In-interview API budget monitor with low-credit warnings
 - Clear startup validation for required provider keys
 - Automated Python and frontend CI checks
 
@@ -128,7 +129,7 @@ python agent.py start
 
 ## Run the Next.js frontend
 
-The `frontend/` directory contains a separate Next.js application. Next.js renders the React interface and provides a small server-side token endpoint; the Python process remains the interview agent.
+The `frontend/` directory contains a separate Next.js application. Next.js renders the React interface and provides small server-side endpoints for LiveKit room tokens and provider usage data; the Python process remains the interview agent.
 
 In a second terminal:
 
@@ -139,15 +140,46 @@ npm install
 npm run dev
 ```
 
-Add the same LiveKit credentials to `frontend/.env.local`:
+Add the LiveKit and provider credentials to `frontend/.env.local`:
 
 ```env
 LIVEKIT_URL=wss://your-livekit-project.livekit.cloud
 LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
+
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+DEEPGRAM_API_KEY=your_deepgram_api_key
+GROQ_API_KEY=your_groq_api_key
+```
+
+Optional Deepgram billing settings:
+
+```env
+DEEPGRAM_PROJECT_ID=
+DEEPGRAM_LOW_BALANCE=5
+DEEPGRAM_CRITICAL_BALANCE=1
 ```
 
 Open `http://localhost:3000`, enter a name and target role, and begin the interview. Keep `python agent.py dev` running in the other terminal.
+
+## API budget monitor
+
+During an interview, the frontend displays an **API budget** menu beside the timer. The browser requests sanitized usage information from the server-side `/api/credits` route every 60 seconds. Provider API keys stay on the server and are never returned to the browser.
+
+The monitor uses these states:
+
+- **OK:** usage is healthy
+- **Low:** 25% or less remains
+- **Critical:** 10% or less remains
+- **Unavailable:** the provider does not expose the requested data or the key lacks billing permission
+
+Provider behavior:
+
+- **ElevenLabs** reports exact voice characters used and remaining in the current billing period.
+- **Deepgram** reports the selected project's balance when the API key has project-billing permission. A transcription-capable key can still receive `403 Forbidden` from the billing endpoint; the interview remains functional and the widget explains the missing permission.
+- **Groq** does not expose a traditional account-credit balance through the API. The widget uses rate-limit response headers when available. Some authenticated endpoints omit those headers, in which case the widget directs the user to the Groq console for exact limits.
+
+Failures are isolated by provider. An unavailable balance never blocks the interview or prevents the other providers from reporting usage.
 
 ## Interview flow
 
@@ -207,21 +239,24 @@ The project intentionally uses separate providers for speech recognition, reason
 
 Groq is accessed through an OpenAI-compatible interface, so the LLM provider can be changed without redesigning the rest of the voice pipeline.
 
-Next.js is not an ORM. It is the full-stack React web framework used for the browser interface and token endpoint. A database and ORM such as Prisma or Drizzle can be added later for accounts, saved sessions, transcripts, and scoring history.
+Next.js is not an ORM. It is the full-stack React web framework used for the browser interface, LiveKit token endpoint, and API-budget endpoint. A database and ORM such as Prisma or Drizzle can be added later for accounts, saved sessions, transcripts, and scoring history.
 
 ## Project structure
 
 ```text
-agent.py                         # Main LiveKit worker and interview agents
-requirements.txt                 # Python dependencies
-tests/test_agent.py              # Mock-isolated functional unit tests
-frontend/                        # Next.js browser experience and token route
-.github/workflows/tests.yml      # Python dependency, import, compile, and test CI
-.github/workflows/frontend.yml   # Frontend lint and production-build CI
-.env.example                     # Python agent environment template
-livekit-interview-agent/         # Challenge-specific compatibility copy
+agent.py                              # Main LiveKit worker and interview agents
+requirements.txt                      # Python dependencies
+tests/test_agent.py                   # Mock-isolated functional unit tests
+frontend/                             # Next.js browser experience
+frontend/app/api/token/route.ts       # Short-lived LiveKit participant tokens
+frontend/app/api/credits/route.ts     # Sanitized provider usage aggregation
+frontend/components/credits-health.tsx # In-interview API budget widget
+.github/workflows/tests.yml           # Python dependency, import, compile, and test CI
+.github/workflows/frontend.yml        # Frontend lint and production-build CI
+.env.example                          # Python agent environment template
+livekit-interview-agent/              # Challenge-specific compatibility copy
 ```
 
 ## Security
 
-Keep API keys in `.env`, `frontend/.env.local`, or another local secret store. Do not commit real credentials. The frontend token endpoint creates short-lived room tokens, but it should gain authentication and rate limiting before a public production deployment.
+Keep API keys in `.env`, `frontend/.env.local`, or another local secret store. Do not commit real credentials. The browser receives only sanitized usage totals, never provider keys or raw account data. The frontend token and credit endpoints should gain authentication and rate limiting before a public production deployment.

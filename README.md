@@ -1,6 +1,6 @@
 # LiveKit AI Mock Interview Agent
 
-A real-time voice mock interview agent built with **LiveKit Agents**, **Silero VAD**, **Deepgram STT**, a **Groq-hosted Llama model**, and **ElevenLabs TTS**.
+A real-time voice mock interview agent built with **LiveKit Agents**, **Silero VAD**, **Deepgram STT**, a **Groq-hosted Llama model**, **ElevenLabs TTS**, and an optional **Next.js web frontend**.
 
 The agent conducts a focused two-stage interview:
 
@@ -13,6 +13,8 @@ A candidate joins a LiveKit room, speaks naturally, and hears the AI interviewer
 
 ```text
 Candidate microphone
+        ↓
+Next.js frontend or console
         ↓
 LiveKit room
         ↓
@@ -43,8 +45,10 @@ The LLM is configured through LiveKit's `openai.LLM` adapter using Groq's OpenAI
 - Patient fixed endpointing to reduce mid-answer cutoffs
 - Interruption handling disabled for calmer mock-interview flow
 - Local console mode and LiveKit worker mode
+- Next.js interview setup and browser voice-room experience
+- Short-lived LiveKit token generation through a server-side route
 - Clear startup validation for required provider keys
-- Automated unit tests and GitHub Actions CI
+- Automated Python and frontend CI checks
 
 ## Required API keys
 
@@ -68,7 +72,7 @@ You can obtain credentials from:
 
 > Free tiers, model availability, and usage limits can change. Check each provider dashboard before running long sessions.
 
-## Setup
+## Python agent setup
 
 Clone the repository and enter the project directory:
 
@@ -102,7 +106,7 @@ Download LiveKit plugin model files, including the Silero VAD assets:
 python -m livekit.agents download-files
 ```
 
-## Run
+## Run the agent
 
 For a local terminal-based test:
 
@@ -110,13 +114,40 @@ For a local terminal-based test:
 python agent.py console
 ```
 
-To run a LiveKit worker that can be dispatched to rooms:
+To run a development worker that the browser frontend can dispatch into rooms:
+
+```bash
+python agent.py dev
+```
+
+To run the worker in production mode:
 
 ```bash
 python agent.py start
 ```
 
-After the worker starts, join a room through the LiveKit Agents Playground or a compatible frontend. The agent listens to the candidate, generates an interview response, and publishes synthesized speech back to the room.
+## Run the Next.js frontend
+
+The `frontend/` directory contains a separate Next.js application. Next.js renders the React interface and provides a small server-side token endpoint; the Python process remains the interview agent.
+
+In a second terminal:
+
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+Add the same LiveKit credentials to `frontend/.env.local`:
+
+```env
+LIVEKIT_URL=wss://your-livekit-project.livekit.cloud
+LIVEKIT_API_KEY=your_livekit_api_key
+LIVEKIT_API_SECRET=your_livekit_api_secret
+```
+
+Open `http://localhost:3000`, enter a name and target role, and begin the interview. Keep `python agent.py dev` running in the other terminal.
 
 ## Interview flow
 
@@ -144,15 +175,22 @@ These settings trade a little responsiveness for a calmer mock-interview experie
 
 ## Testing
 
-Run the unit suite with:
+Run the Python unit suite with:
 
 ```bash
 python -m unittest -v tests.test_agent
 ```
 
-Running the test module directly avoids platform-specific `unittest discover` path issues while still executing the complete suite.
+Run the frontend checks with:
 
-The tests use in-process provider and LiveKit fakes, so they do not make network requests or consume API credits. They verify:
+```bash
+cd frontend
+npm install
+npm run lint
+npm run build
+```
+
+The Python tests use in-process provider and LiveKit fakes, so they do not make network requests or consume API credits. They verify:
 
 - Required API-key validation
 - Stage-specific agent instructions
@@ -161,7 +199,7 @@ The tests use in-process provider and LiveKit fakes, so they do not make network
 - Groq, Deepgram, ElevenLabs, Silero, and turn-handling configuration
 - Session startup with the expected room and initial agent
 
-GitHub Actions also installs the real dependencies and imports `agent.py` before running the isolated tests. This catches dependency or LiveKit API incompatibilities without calling external services.
+GitHub Actions installs the real Python and JavaScript dependencies, imports and compiles the agent, lints the frontend, and produces a production Next.js build.
 
 ## Architecture notes
 
@@ -169,17 +207,21 @@ The project intentionally uses separate providers for speech recognition, reason
 
 Groq is accessed through an OpenAI-compatible interface, so the LLM provider can be changed without redesigning the rest of the voice pipeline.
 
+Next.js is not an ORM. It is the full-stack React web framework used for the browser interface and token endpoint. A database and ORM such as Prisma or Drizzle can be added later for accounts, saved sessions, transcripts, and scoring history.
+
 ## Project structure
 
 ```text
 agent.py                         # Main LiveKit worker and interview agents
 requirements.txt                 # Python dependencies
 tests/test_agent.py              # Mock-isolated functional unit tests
-.github/workflows/tests.yml      # Dependency, import, compile, and test CI
-.env.example                     # Example environment configuration
+frontend/                        # Next.js browser experience and token route
+.github/workflows/tests.yml      # Python dependency, import, compile, and test CI
+.github/workflows/frontend.yml   # Frontend lint and production-build CI
+.env.example                     # Python agent environment template
 livekit-interview-agent/         # Challenge-specific compatibility copy
 ```
 
 ## Security
 
-Keep API keys in `.env` or another local secret store. Do not commit real credentials to the repository.
+Keep API keys in `.env`, `frontend/.env.local`, or another local secret store. Do not commit real credentials. The frontend token endpoint creates short-lived room tokens, but it should gain authentication and rate limiting before a public production deployment.

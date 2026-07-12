@@ -7,6 +7,7 @@ out-tsc
 *.tsbuildinfo
 .expo
 .expo-shared
+.next
 
 # dependencies
 node_modules
@@ -48,9 +49,9 @@ Thumbs.db
 .cache/
 .local/
 
-#Enviornment Variables
+# Environment variables
 livekit-interview-agent/.env.env
 **/.env
+**/.env.local
 .env
-**/.env
 .venv/

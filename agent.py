@@ -12,6 +12,7 @@ This version includes:
 import asyncio
 import inspect
 import logging
+import multiprocessing
 import os
 import time
 from dataclasses import dataclass, field
@@ -177,4 +178,5 @@ async def entrypoint(ctx: JobContext):
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

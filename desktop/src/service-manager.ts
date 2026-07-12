@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import type { MockMateCredentials, ServiceEvent, StartResult } from './types';
@@ -100,6 +100,37 @@ async function verifyResource(target: string, label: string): Promise<void> {
   }
 }
 
+async function resolvePackagedFrontend(frontendDirectory: string): Promise<{
+  server: string;
+  workingDirectory: string;
+}> {
+  const pathFile = path.join(frontendDirectory, 'server-path.txt');
+  await verifyResource(pathFile, 'Next.js server path manifest');
+
+  const relativeServer = (await readFile(pathFile, 'utf8')).trim();
+  if (!relativeServer) {
+    throw new Error('Next.js server path manifest is empty.');
+  }
+
+  const normalizedRelative = path.normalize(relativeServer);
+  if (
+    path.isAbsolute(normalizedRelative) ||
+    normalizedRelative === '..' ||
+    normalizedRelative.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error('Next.js server path manifest contains an unsafe path.');
+  }
+
+  const frontendRoot = path.resolve(frontendDirectory);
+  const server = path.resolve(frontendRoot, normalizedRelative);
+  if (server !== frontendRoot && !server.startsWith(`${frontendRoot}${path.sep}`)) {
+    throw new Error('Next.js server path escapes the packaged frontend directory.');
+  }
+
+  await verifyResource(server, 'Next.js standalone server');
+  return { server, workingDirectory: path.dirname(server) };
+}
+
 async function startDevelopmentServices(credentials: MockMateCredentials): Promise<void> {
   const root = repoRoot();
   const python = await findPython(root);
@@ -130,13 +161,12 @@ async function startPackagedServices(credentials: MockMateCredentials): Promise<
   );
   const nodeExecutable = path.join(process.resourcesPath, 'node', windows ? 'node.exe' : 'node');
   const frontendDirectory = path.join(process.resourcesPath, 'frontend');
-  const frontendServer = path.join(frontendDirectory, 'server.js');
 
   await Promise.all([
     verifyResource(agentExecutable, 'Python interview worker'),
     verifyResource(nodeExecutable, 'Bundled Node.js runtime'),
-    verifyResource(frontendServer, 'Next.js standalone server'),
   ]);
+  const { server: frontendServer, workingDirectory } = await resolvePackagedFrontend(frontendDirectory);
 
   const env = childEnvironment(credentials);
 
@@ -148,7 +178,7 @@ async function startPackagedServices(credentials: MockMateCredentials): Promise<
   wireLogs('agent', agentProcess);
 
   frontendProcess = spawn(nodeExecutable, [frontendServer], {
-    cwd: frontendDirectory,
+    cwd: workingDirectory,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

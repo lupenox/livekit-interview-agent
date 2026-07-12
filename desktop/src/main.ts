@@ -79,11 +79,14 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devServerAllowed = MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL)
+      : false;
     const allowed =
       url.startsWith('file://') ||
       url.startsWith('http://127.0.0.1:3000') ||
       url.startsWith('http://localhost:3000') ||
-      url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL ?? '');
+      devServerAllowed;
     if (!allowed) event.preventDefault();
   });
 

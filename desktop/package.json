@@ -7,8 +7,9 @@
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
+    "build:sidecars": "node scripts/build-sidecars.mjs",
+    "package": "npm run build:sidecars && electron-forge package",
+    "make": "npm run build:sidecars && electron-forge make",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

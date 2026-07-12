@@ -112,6 +112,14 @@ async function getDeepgramCredits(): Promise<ProviderCredit> {
       cache: 'no-store',
     });
 
+    if (projectsResponse.status === 403) {
+      return unavailable(
+        'Deepgram',
+        'Speech balance',
+        'This API key is not permitted to list project billing data (HTTP 403). Transcription can still work normally.',
+      );
+    }
+
     if (!projectsResponse.ok) {
       throw new Error(`Deepgram projects returned ${projectsResponse.status}`);
     }
@@ -133,6 +141,14 @@ async function getDeepgramCredits(): Promise<ProviderCredit> {
       cache: 'no-store',
     },
   );
+
+  if (balanceResponse.status === 403) {
+    return unavailable(
+      'Deepgram',
+      'Speech balance',
+      'This API key can use speech services but is not permitted to read project billing (HTTP 403). Use an account/key with billing access or check the Deepgram console.',
+    );
+  }
 
   if (!balanceResponse.ok) {
     throw new Error(`Deepgram balances returned ${balanceResponse.status}`);
@@ -201,7 +217,7 @@ async function getGroqLimits(): Promise<ProviderCredit> {
     return unavailable(
       'Groq',
       'Rate-limit headroom',
-      'Groq did not return rate-limit headers for this request.',
+      'Groq authenticated successfully, but the models endpoint did not return rate-limit headers. Exact limits remain available in the Groq console.',
     );
   }
 

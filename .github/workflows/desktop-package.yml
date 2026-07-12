@@ -1,0 +1,78 @@
+name: Desktop Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            artifact: mockmate-linux
+          - name: Windows
+            os: windows-latest
+            artifact: mockmate-windows
+          - name: macOS
+            os: macos-latest
+            artifact: mockmate-macos
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot rpm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python agent and packaging dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r desktop/requirements-build.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Type-check desktop application
+        working-directory: desktop
+        run: npm run typecheck
+
+      - name: Build installers
+        working-directory: desktop
+        run: npm run make
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: desktop/out/make/**
+          if-no-files-found: error
+          retention-days: 14

@@ -146,8 +146,10 @@ These settings help the interviewer avoid cutting off the candidate while keepin
 Run the unit suite with:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m unittest -v tests.test_agent
 ```
+
+Running the test module directly avoids platform-specific `unittest discover` path issues while still executing the complete suite.
 
 The tests use in-process provider and LiveKit fakes, so they do not make network requests or consume API credits. They verify:
 

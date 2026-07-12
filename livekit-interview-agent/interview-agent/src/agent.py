@@ -1,4 +1,4 @@
-"""LiveKit + Gemini two-stage voice mock interview agent.
+"""LiveKit + Groq two-stage voice mock interview agent.
 
 Run locally with:
     python agent.py console
@@ -6,8 +6,6 @@ Run locally with:
 Run as a LiveKit worker with:
     python agent.py start
 """
-
-from __future__ import annotations
 
 from __future__ import annotations
 
@@ -30,8 +28,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("interview-agent")
 
 INTRO_TIMEOUT_SECONDS = 60
-TURNS_TO_ADVANCE = 1
-GEMINI_MODEL = "gemini-2.5-flash"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 DEEPGRAM_MODEL = "nova-3"
 ELEVENLABS_MODEL = "eleven_turbo_v2_5"
 
@@ -98,7 +96,7 @@ class InterviewStateMachine:
 
     def should_advance(self) -> bool:
         # Only move from intro to project discussion.
-        # Do NOT auto-end the interview; let the interviewer keep asking follow-ups.
+        # Do not auto-end the interview; keep asking project follow-ups.
         if self.stage == InterviewStage.SELF_INTRO:
             return self.user_turns >= 1 and self.time_in_stage() >= 8
         return False
@@ -146,7 +144,7 @@ def _require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(
-            f"Missing {name}. Add it to .env/.env.local before starting the voice agent."
+            f"Missing {name}. Add it to .env or .env.local before starting the voice agent."
         )
     return value
 
@@ -158,9 +156,9 @@ def _log_required_configuration() -> None:
             "LIVEKIT_URL",
             "LIVEKIT_API_KEY",
             "LIVEKIT_API_SECRET",
+            "GROQ_API_KEY",
             "DEEPGRAM_API_KEY",
             "ELEVENLABS_API_KEY",
-            "GOOGLE_API_KEY",
         )
         if not os.getenv(name)
     ]
@@ -168,7 +166,7 @@ def _log_required_configuration() -> None:
         logger.error("Missing required environment variables: %s", ", ".join(missing))
     else:
         logger.info(
-            "Required LiveKit, Deepgram, ElevenLabs, and Gemini keys are configured"
+            "Required LiveKit, Groq, Deepgram, and ElevenLabs keys are configured"
         )
 
 
@@ -177,12 +175,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
     Audio pipeline: the room audio is subscribed by `ctx.connect()`. Silero VAD
     detects candidate speech boundaries, Deepgram converts candidate speech to
-    text, Gemini produces the interviewer response, and ElevenLabs publishes the
-    response back to the room as an agent audio track. In short:
-    Deepgram STT → Gemini LLM → ElevenLabs TTS.
+    text, Groq-hosted Llama produces the interviewer response, and ElevenLabs
+    publishes the response back to the room as an agent audio track. In short:
+    Deepgram STT -> Groq Llama -> ElevenLabs TTS.
     """
 
     _log_required_configuration()
+    groq_api_key = _require_env("GROQ_API_KEY")
     deepgram_api_key = _require_env("DEEPGRAM_API_KEY")
     elevenlabs_api_key = _require_env("ELEVENLABS_API_KEY")
 
@@ -192,28 +191,30 @@ async def entrypoint(ctx: JobContext) -> None:
     except Exception:
         logger.exception("Failed to connect to LiveKit room")
         raise
+
     state = InterviewStateMachine()
     interview_agent = InterviewAgent(state)
 
     session = AgentSession(
-        # Voice Activity Detection: lets the agent know when the user starts and
-        # stops speaking so complete turns are sent through the pipeline.
+        # Voice Activity Detection: identifies candidate speech boundaries.
         vad=silero.VAD.load(),
-        # STT: candidate microphone audio -> text using Deepgram's free-tier-friendly API.
+        # STT: candidate microphone audio -> text.
         stt=deepgram.STT(
             model=DEEPGRAM_MODEL,
             language="en-US",
             api_key=deepgram_api_key,
         ),
-        # LLM: transcribed text + current stage instructions -> interviewer text. Gemini
-        # only needs GOOGLE_API_KEY, so it stays budget-friendly for this demo.
+        # LLM: transcribed text + stage instructions -> interviewer response.
         llm=openai.LLM(
-    model="llama-3.3-70b-versatile",
-    base_url="https://api.groq.com/openai/v1",
-    api_key=os.getenv("GROQ_API_KEY"),
-),
-        # TTS: interviewer text -> speech published back into LiveKit using ElevenLabs.
-        tts=elevenlabs.TTS(model=ELEVENLABS_MODEL, api_key=elevenlabs_api_key),
+            model=GROQ_MODEL,
+            base_url=GROQ_BASE_URL,
+            api_key=groq_api_key,
+        ),
+        # TTS: interviewer response -> speech published into the LiveKit room.
+        tts=elevenlabs.TTS(
+            model=ELEVENLABS_MODEL,
+            api_key=elevenlabs_api_key,
+        ),
     )
 
     @session.on("error")
@@ -240,7 +241,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
     try:
         await session.start(room=ctx.room, agent=interview_agent)
-        logger.info("Voice session started with Deepgram STT → Gemini → ElevenLabs TTS")
+        logger.info(
+            "Voice session started with Deepgram STT -> Groq Llama -> ElevenLabs TTS"
+        )
     except Exception:
         logger.exception("Failed to start the LiveKit voice session")
         raise
@@ -251,9 +254,10 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
 
-
 if __name__ == "__main__":
-    agents.cli.run_app(WorkerOptions(
-        entrypoint_fnc=entrypoint,
-        agent_name="interview-agent",
-    ))
+    agents.cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name="interview-agent",
+        )
+    )

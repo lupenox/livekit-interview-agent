@@ -7,6 +7,7 @@
   --muted: #a7afc2;
   --accent: #8b7cff;
   --accent-2: #4dd6c6;
+  --warning: #ffc866;
   --danger: #ff6978;
 }
 
@@ -54,9 +55,43 @@ button { cursor: pointer; }
 
 .livekit-shell { min-height: 100vh; background: transparent !important; }
 .interview-layout { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto auto; gap: 22px; padding: 28px 0; }
-.interview-header { display: flex; align-items: center; justify-content: space-between; }
+.interview-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .interview-header h1 { font-size: 1.25rem; margin: 0; }
-.timer-pill { display: flex; align-items: center; gap: 8px; color: #e0e4ef; font-variant-numeric: tabular-nums; }
+.interview-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; position: relative; }
+.timer-pill { display: flex; align-items: center; gap: 8px; color: #e0e4ef; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.credits-menu { position: relative; z-index: 20; }
+.credits-menu summary { list-style: none; display: flex; align-items: center; gap: 8px; min-height: 35px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.04); color: #dfe3ed; font-size: .82rem; cursor: pointer; user-select: none; }
+.credits-menu summary::-webkit-details-marker { display: none; }
+.credit-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #778096; box-shadow: 0 0 0 4px rgba(119,128,150,.1); }
+.credits-ok .credit-status-dot { background: var(--accent-2); box-shadow: 0 0 0 4px rgba(77,214,198,.12); }
+.credits-low .credit-status-dot { background: var(--warning); box-shadow: 0 0 0 4px rgba(255,200,102,.12); }
+.credits-critical .credit-status-dot { background: var(--danger); box-shadow: 0 0 0 4px rgba(255,105,120,.14); }
+.credits-low summary { border-color: rgba(255,200,102,.28); color: #ffe1a6; }
+.credits-critical summary { border-color: rgba(255,105,120,.34); color: #ffabb4; }
+.credits-popover { position: absolute; top: calc(100% + 10px); right: 0; width: min(390px, calc(100vw - 28px)); border: 1px solid var(--border); border-radius: 18px; background: rgba(10,13,21,.98); box-shadow: 0 24px 70px rgba(0,0,0,.48); padding: 16px; }
+.credits-popover-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.credits-popover-header div { display: grid; gap: 3px; }
+.credits-popover-header span, .credit-provider-heading span, .credit-detail, .credits-checked-at { color: var(--muted); font-size: .75rem; }
+.credits-popover-header button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,.04); color: #dfe3ed; }
+.credits-error { display: flex; align-items: center; gap: 7px; color: #ffabb4; font-size: .78rem; padding: 11px 0 0; }
+.credit-provider-list { display: grid; gap: 10px; margin-top: 12px; }
+.credit-provider { border: 1px solid var(--border); border-radius: 13px; padding: 12px; background: rgba(255,255,255,.025); }
+.credit-provider-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.credit-provider-heading > div { display: grid; gap: 2px; }
+.credit-provider-state { text-transform: uppercase; letter-spacing: .08em; font-weight: 750; font-size: .65rem !important; }
+.credit-provider-ok .credit-provider-state { color: var(--accent-2); }
+.credit-provider-low .credit-provider-state { color: var(--warning); }
+.credit-provider-critical .credit-provider-state { color: var(--danger); }
+.credit-provider-unavailable .credit-provider-state { color: #7f899e; }
+.credit-primary-value { margin-top: 10px; font-size: .86rem; color: #e8ebf3; font-variant-numeric: tabular-nums; }
+.credit-meter { display: block; height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.07); margin-top: 9px; }
+.credit-meter span { display: block; height: 100%; border-radius: inherit; background: var(--accent-2); transition: width .25s ease; }
+.credit-provider-low .credit-meter span { background: var(--warning); }
+.credit-provider-critical .credit-meter span { background: var(--danger); }
+.credit-detail { margin-top: 7px; line-height: 1.4; }
+.credits-checked-at { margin-top: 11px; text-align: right; }
+
 .interviewer-card { min-height: 470px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border: 1px solid var(--border); border-radius: 32px; background: linear-gradient(180deg, rgba(21,25,39,.8), rgba(10,12,20,.8)); overflow: hidden; position: relative; }
 .interviewer-card::before { content: ''; position: absolute; inset: -50%; background: radial-gradient(circle, rgba(139,124,255,.12), transparent 34%); animation: drift 12s linear infinite; }
 .avatar-orbit { width: 134px; height: 134px; border-radius: 50%; display: grid; place-items: center; position: relative; background: rgba(139,124,255,.08); border: 1px solid rgba(169,158,255,.22); box-shadow: 0 0 90px rgba(139,124,255,.16); z-index: 1; }
@@ -80,6 +115,11 @@ button { cursor: pointer; }
   .hero-grid { grid-template-columns: 1fr; padding-top: 70px; }
   .hero-copy h1 { font-size: clamp(3rem, 15vw, 5rem); }
   .setup-card { max-width: 600px; }
+}
+@media (max-width: 680px) {
+  .interview-header { align-items: flex-start; }
+  .interview-header-actions { flex-direction: column-reverse; align-items: flex-end; }
+  .credits-menu summary span:last-child { display: none; }
 }
 @media (max-width: 560px) {
   .landing-shell, .interview-layout { width: min(100% - 24px, 1180px); }

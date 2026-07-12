@@ -10,6 +10,8 @@ import {
 } from '@livekit/components-react';
 import { ShieldCheck, Sparkles, TimerReset } from 'lucide-react';
 
+import { CreditsHealth } from './credits-health';
+
 export type ConnectionDetails = {
   serverUrl: string;
   participantToken: string;
@@ -74,7 +76,10 @@ function InterviewExperience({ targetRole, onLeave }: { targetRole: string; onLe
           <div className="eyebrow">Live interview</div>
           <h1>{targetRole}</h1>
         </div>
-        <div className="timer-pill"><TimerReset size={17} />{elapsed}</div>
+        <div className="interview-header-actions">
+          <CreditsHealth />
+          <div className="timer-pill"><TimerReset size={17} />{elapsed}</div>
+        </div>
       </header>
 
       <section className="interviewer-card" aria-live="polite">

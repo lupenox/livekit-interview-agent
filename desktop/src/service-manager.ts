@@ -5,8 +5,10 @@ import path from 'node:path';
 import type { Readable } from 'node:stream';
 import type { MockMateCredentials, ServiceEvent, StartResult } from './types';
 
-const FRONTEND_URL = 'http://127.0.0.1:3000';
-const STARTUP_TIMEOUT_MS = 45_000;
+const FRONTEND_HOST = '127.0.0.1';
+const FRONTEND_PORT = '3000';
+const FRONTEND_URL = `http://${FRONTEND_HOST}:${FRONTEND_PORT}`;
+const STARTUP_TIMEOUT_MS = 60_000;
 
 type ManagedProcess = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -51,7 +53,10 @@ function childEnvironment(credentials: MockMateCredentials): NodeJS.ProcessEnv {
     GROQ_API_KEY: credentials.groqApiKey,
     DEEPGRAM_API_KEY: credentials.deepgramApiKey,
     ELEVENLABS_API_KEY: credentials.elevenlabsApiKey,
-    PORT: '3000',
+    HOSTNAME: FRONTEND_HOST,
+    PORT: FRONTEND_PORT,
+    NODE_ENV: app.isPackaged ? 'production' : 'development',
+    NEXT_TELEMETRY_DISABLED: '1',
   };
 }
 
@@ -62,6 +67,9 @@ function wireLogs(service: ServiceEvent['service'], child: ManagedProcess): void
   child.stderr.on('data', (chunk: Buffer) => {
     emit({ service, stream: 'stderr', message: chunk.toString() });
   });
+  child.on('error', (error) => {
+    emit({ service, stream: 'stderr', message: `${service} failed to start: ${error.message}\n` });
+  });
   child.on('exit', (code, signal) => {
     emit({ service, stream: 'status', message: `${service} exited (${code ?? signal ?? 'unknown'}).` });
   });
@@ -71,26 +79,28 @@ async function waitForFrontend(): Promise<void> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (!frontendProcess || frontendProcess.exitCode !== null) {
-      throw new Error('Frontend exited during startup.');
+      throw new Error('Frontend exited during startup. Open Service logs for details.');
     }
     try {
       const response = await fetch(FRONTEND_URL, { signal: AbortSignal.timeout(1_500) });
       if (response.ok) return;
     } catch {
-      // Next.js is still starting.
+      // The standalone Next.js server is still starting.
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('Frontend did not become ready within 45 seconds.');
+  throw new Error('Frontend did not become ready within 60 seconds.');
 }
 
-export async function startServices(credentials: MockMateCredentials): Promise<StartResult> {
-  if (agentProcess || frontendProcess) return { frontendUrl: FRONTEND_URL };
-
-  if (app.isPackaged) {
-    throw new Error('Packaged service resources are not included in this foundation milestone yet.');
+async function verifyResource(target: string, label: string): Promise<void> {
+  try {
+    await access(target);
+  } catch {
+    throw new Error(`${label} is missing from the MockMate installation: ${target}`);
   }
+}
 
+async function startDevelopmentServices(credentials: MockMateCredentials): Promise<void> {
   const root = repoRoot();
   const python = await findPython(root);
   const env = childEnvironment(credentials);
@@ -103,14 +113,58 @@ export async function startServices(credentials: MockMateCredentials): Promise<S
   wireLogs('agent', agentProcess);
 
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  frontendProcess = spawn(npmCommand, ['run', 'dev', '--', '--hostname', '127.0.0.1'], {
+  frontendProcess = spawn(npmCommand, ['run', 'dev', '--', '--hostname', FRONTEND_HOST], {
     cwd: path.join(root, 'frontend'),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   wireLogs('frontend', frontendProcess);
+}
+
+async function startPackagedServices(credentials: MockMateCredentials): Promise<void> {
+  const windows = process.platform === 'win32';
+  const agentExecutable = path.join(
+    process.resourcesPath,
+    'agent',
+    windows ? 'mockmate-agent.exe' : 'mockmate-agent',
+  );
+  const nodeExecutable = path.join(process.resourcesPath, 'node', windows ? 'node.exe' : 'node');
+  const frontendDirectory = path.join(process.resourcesPath, 'frontend');
+  const frontendServer = path.join(frontendDirectory, 'server.js');
+
+  await Promise.all([
+    verifyResource(agentExecutable, 'Python interview worker'),
+    verifyResource(nodeExecutable, 'Bundled Node.js runtime'),
+    verifyResource(frontendServer, 'Next.js standalone server'),
+  ]);
+
+  const env = childEnvironment(credentials);
+
+  agentProcess = spawn(agentExecutable, ['start'], {
+    cwd: path.dirname(agentExecutable),
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  wireLogs('agent', agentProcess);
+
+  frontendProcess = spawn(nodeExecutable, [frontendServer], {
+    cwd: frontendDirectory,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  wireLogs('frontend', frontendProcess);
+}
+
+export async function startServices(credentials: MockMateCredentials): Promise<StartResult> {
+  if (agentProcess || frontendProcess) return { frontendUrl: FRONTEND_URL };
 
   try {
+    if (app.isPackaged) {
+      await startPackagedServices(credentials);
+    } else {
+      await startDevelopmentServices(credentials);
+    }
+
     await waitForFrontend();
     emit({ service: 'frontend', stream: 'status', message: 'MockMate is ready.' });
     return { frontendUrl: FRONTEND_URL };

@@ -51,10 +51,12 @@ export function CreditsHealth() {
 
   const loadCredits = useCallback(async () => {
     try {
-      setError(null);
       const response = await fetch('/api/credits', { cache: 'no-store' });
       if (!response.ok) throw new Error(`Credits endpoint returned ${response.status}`);
-      setData((await response.json()) as CreditsResponse);
+
+      const nextData = (await response.json()) as CreditsResponse;
+      setData(nextData);
+      setError(null);
     } catch (loadError) {
       console.error(loadError);
       setError('Could not refresh API usage.');

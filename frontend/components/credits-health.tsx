@@ -66,9 +66,13 @@ export function CreditsHealth() {
   }, []);
 
   useEffect(() => {
-    void loadCredits();
-    const timer = window.setInterval(() => void loadCredits(), 60_000);
-    return () => window.clearInterval(timer);
+    const initialRefresh = window.setTimeout(() => void loadCredits(), 0);
+    const refreshTimer = window.setInterval(() => void loadCredits(), 60_000);
+
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(refreshTimer);
+    };
   }, [loadCredits]);
 
   const status = useMemo(() => overallStatus(data?.providers ?? []), [data]);

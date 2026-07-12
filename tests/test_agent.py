@@ -18,7 +18,7 @@ class _Options(dict):
 
 
 class _RunContext:
-    def __init__(self, userdata):
+    def __init__(self, userdata=None):
         self.userdata = userdata
 
     @classmethod
@@ -37,11 +37,16 @@ class _AgentSession:
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        self.userdata = kwargs.get("userdata")
         self.started_with = None
+        self.updated_agent = None
         self.__class__.instances.append(self)
 
     async def start(self, *, agent, room):
         self.started_with = {"agent": agent, "room": room}
+
+    def update_agent(self, agent):
+        self.updated_agent = agent
 
 
 class _Factory:
@@ -162,14 +167,16 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("SELF-INTRODUCTION", intro.instructions)
         self.assertIn("PAST EXPERIENCE", past.instructions)
+        self.assertIn("short introduction", intro.instructions)
+        self.assertIn("Wait for complete answers", past.instructions)
         self.assertIs(intro.ctx, context)
         self.assertIs(past.ctx, context)
 
-    async def test_tool_transition_returns_past_experience_agent(self):
+    async def test_tool_transition_returns_past_experience_agent_without_userdata(self):
         context = self.agent.InterviewContext(stage_start_time=1.0)
         intro = self.agent.SelfIntroductionAgent(context)
 
-        next_agent, message = await intro.move_to_past_experience(_RunContext(context))
+        next_agent, message = await intro.move_to_past_experience(_RunContext())
 
         self.assertIsInstance(next_agent, self.agent.PastExperienceAgent)
         self.assertIs(next_agent.ctx, context)
@@ -296,12 +303,16 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(
             session.started_with["agent"], self.agent.SelfIntroductionAgent
         )
+        self.assertIs(session.kwargs["userdata"], session.started_with["agent"].ctx)
         self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["mode"], "fixed")
-        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["min_delay"], 1.0)
-        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["max_delay"], 4.0)
-        self.assertEqual(session.kwargs["turn_handling"]["interruption"]["mode"], "adaptive")
+        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["min_delay"], 2.0)
+        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["max_delay"], 6.0)
+        self.assertFalse(session.kwargs["turn_handling"]["interruption"]["enabled"])
         self.assertEqual(
-            session.kwargs["turn_handling"]["interruption"]["min_duration"], 0.6
+            session.kwargs["turn_handling"]["interruption"]["min_duration"], 1.0
+        )
+        self.assertFalse(
+            session.kwargs["turn_handling"]["preemptive_generation"]["enabled"]
         )
 
     async def test_entrypoint_fails_before_provider_setup_when_key_is_missing(self):

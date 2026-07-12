@@ -1,17 +1,21 @@
 import './styles.css';
 import type { MockMateCredentials, ProviderTest, ServiceEvent } from './types';
 
-const form = document.querySelector<HTMLFormElement>('#credential-form');
-const testButton = document.querySelector<HTMLButtonElement>('#test-button');
-const clearButton = document.querySelector<HTMLButtonElement>('#clear-button');
-const rememberInput = document.querySelector<HTMLInputElement>('#remember');
-const message = document.querySelector<HTMLDivElement>('#message');
-const testResults = document.querySelector<HTMLDivElement>('#test-results');
-const logOutput = document.querySelector<HTMLPreElement>('#service-log');
-
-if (!form || !testButton || !clearButton || !rememberInput || !message || !testResults || !logOutput) {
-  throw new Error('MockMate setup UI failed to initialize.');
+function requireElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`MockMate setup UI is missing ${selector}.`);
+  }
+  return element;
 }
+
+const form = requireElement<HTMLFormElement>('#credential-form');
+const testButton = requireElement<HTMLButtonElement>('#test-button');
+const clearButton = requireElement<HTMLButtonElement>('#clear-button');
+const rememberInput = requireElement<HTMLInputElement>('#remember');
+const message = requireElement<HTMLDivElement>('#message');
+const testResults = requireElement<HTMLDivElement>('#test-results');
+const logOutput = requireElement<HTMLPreElement>('#service-log');
 
 const fields: Array<keyof MockMateCredentials> = [
   'livekitUrl',

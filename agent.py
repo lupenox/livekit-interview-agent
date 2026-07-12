@@ -10,7 +10,6 @@ This version includes:
 """
 
 import asyncio
-import enum
 import logging
 import os
 import time
@@ -18,8 +17,16 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 from livekit.agents import (
-    Agent, AgentSession, JobContext, RunContext, function_tool,
-    TurnHandlingOptions, EndpointingOptions, InterruptionOptions, cli, WorkerOptions
+    Agent,
+    AgentSession,
+    EndpointingOptions,
+    InterruptionOptions,
+    JobContext,
+    RunContext,
+    TurnHandlingOptions,
+    WorkerOptions,
+    cli,
+    function_tool,
 )
 from livekit.plugins import deepgram, elevenlabs, openai, silero
 
@@ -27,9 +34,20 @@ load_dotenv()
 logger = logging.getLogger("mock-interview")
 logging.basicConfig(level=logging.INFO)
 
-
 INTRO_TIMEOUT = 60
 PAST_TIMEOUT = 90
+DEEPGRAM_MODEL = "nova-3"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+ELEVENLABS_MODEL = "eleven_turbo_v2_5"
+
+
+def _require_env(name: str) -> str:
+    """Return a required API key or raise a clear startup error."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing {name}. Add it to .env before starting the agent.")
+    return value
 
 
 @dataclass
@@ -107,16 +125,26 @@ class PastExperienceAgent(Agent):
 
 async def entrypoint(ctx: JobContext):
     interview_ctx = InterviewContext()
+    groq_api_key = _require_env("GROQ_API_KEY")
+    deepgram_api_key = _require_env("DEEPGRAM_API_KEY")
+    elevenlabs_api_key = _require_env("ELEVENLABS_API_KEY")
 
     session = AgentSession(
         vad=silero.VAD.load(),
-        stt=deepgram.STT(model="nova-3", language="en-US"),
-        llm=openai.LLM(
-            model="llama-3.3-70b-versatile",
-            base_url="https://api.groq.com/openai/v1",
-            api_key=os.getenv("GROQ_API_KEY"),
+        stt=deepgram.STT(
+            model=DEEPGRAM_MODEL,
+            language="en-US",
+            api_key=deepgram_api_key,
         ),
-        tts=elevenlabs.TTS(model="eleven_turbo_v2_5"),
+        llm=openai.LLM(
+            model=GROQ_MODEL,
+            base_url=GROQ_BASE_URL,
+            api_key=groq_api_key,
+        ),
+        tts=elevenlabs.TTS(
+            model=ELEVENLABS_MODEL,
+            api_key=elevenlabs_api_key,
+        ),
         turn_handling=TurnHandlingOptions(
             endpointing=EndpointingOptions(mode="fixed", min_delay=1.0, max_delay=4.0),
             interruption=InterruptionOptions(mode="adaptive", min_duration=0.6),

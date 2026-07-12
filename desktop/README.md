@@ -81,6 +81,8 @@ Create the platform installer or archive:
 npm run make
 ```
 
+`npm run package` is the best first validation on Arch Linux. Creating `.deb` and `.rpm` installers may additionally require distro packaging tools; the GitHub Actions release workflow builds those installers on Ubuntu.
+
 Both commands first run `npm run build:sidecars`, which:
 
 1. downloads the LiveKit plugin model assets

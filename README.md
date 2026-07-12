@@ -42,7 +42,8 @@ The LLM is configured through LiveKit's `openai.LLM` adapter using Groq's OpenAI
 - Time-based fallbacks to keep the interview moving
 - Adaptive interruption handling and fixed endpointing controls
 - Local console mode and LiveKit worker mode
-- Environment-based secret configuration
+- Clear startup validation for required provider keys
+- Automated unit tests and GitHub Actions CI
 
 ## Required API keys
 
@@ -140,6 +141,25 @@ The session uses:
 
 These settings help the interviewer avoid cutting off the candidate while keeping the conversation responsive.
 
+## Testing
+
+Run the unit suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests use in-process provider and LiveKit fakes, so they do not make network requests or consume API credits. They verify:
+
+- Required API-key validation
+- Stage-specific agent instructions
+- Function-tool transitions
+- Self-introduction and past-experience timeout behavior
+- Groq, Deepgram, ElevenLabs, Silero, and turn-handling configuration
+- Session startup with the expected room and initial agent
+
+GitHub Actions also installs the real dependencies and imports `agent.py` before running the isolated tests. This catches dependency or LiveKit API incompatibilities without calling external services.
+
 ## Architecture notes
 
 The project intentionally uses separate providers for speech recognition, reasoning, and speech synthesis instead of a single end-to-end voice model. This makes each component easier to replace, test, and tune independently.
@@ -151,6 +171,8 @@ Groq is accessed through an OpenAI-compatible interface, so the LLM provider can
 ```text
 agent.py                         # Main LiveKit worker and interview agents
 requirements.txt                 # Python dependencies
+tests/test_agent.py              # Mock-isolated functional unit tests
+.github/workflows/tests.yml      # Dependency, import, compile, and test CI
 .env.example                     # Example environment configuration
 livekit-interview-agent/         # Challenge-specific compatibility copy
 ```

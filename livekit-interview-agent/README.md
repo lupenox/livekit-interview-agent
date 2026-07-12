@@ -1,62 +1,93 @@
-# LiveKit AI Mock Interview Agent
+# LiveKit AI Mock Interview Agent — Compatibility Copy
 
-A real-time voice mock interview agent built with **LiveKit Agents**, **Deepgram STT**, **Gemini**, and **ElevenLabs TTS**. The agent runs a two-stage interview:
+This directory contains the challenge-specific compatibility implementation of the real-time voice mock interview agent.
 
-1. Self Introduction
-2. Past Experience / Project Discussion
+The agent uses **LiveKit Agents**, **Silero VAD**, **Deepgram STT**, a **Groq-hosted Llama model**, and **ElevenLabs TTS** to conduct a two-stage spoken interview:
 
-It uses a free-tier-friendly voice pipeline so a candidate can speak in a LiveKit room and hear the agent respond as an audio participant.
+1. **Self Introduction**
+2. **Past Experience / Project Discussion**
 
-## What changed
+The repository-root implementation is the primary version. This copy preserves the original challenge-oriented structure while using the same current provider stack.
 
-The previous implementation used Google Cloud Speech-to-Text and Google Cloud Text-to-Speech, which require Google Cloud billing credentials. This version keeps Gemini for interview reasoning but moves speech services to providers with accessible free tiers:
+## Voice pipeline
 
-- `ctx.connect()` joins the LiveKit room and subscribes to room media.
-- `silero.VAD.load()` detects when the candidate starts and stops speaking.
-- `deepgram.STT(model="nova-3")` converts candidate microphone audio to text.
-- `google.LLM(model="gemini-2.5-flash")` generates interview responses.
-- `elevenlabs.TTS(model="eleven_turbo_v2_5")` turns responses into speech and publishes an agent audio track back to the room.
+```text
+Candidate microphone
+        ↓
+LiveKit room
+        ↓
+Silero VAD
+        ↓
+Deepgram Nova-3 STT
+        ↓
+Groq-hosted Llama 3.3 70B
+(OpenAI-compatible API)
+        ↓
+ElevenLabs Turbo v2.5 TTS
+        ↓
+LiveKit agent audio track
+```
 
-The audio path is now **Deepgram STT → Gemini LLM → ElevenLabs TTS**.
+Groq is connected through LiveKit's `openai.LLM` adapter using its OpenAI-compatible endpoint. It replaced Gemini because Gemini's free-request limits made repeated development and testing less practical.
+
+## Features
+
+- Real-time voice interview inside a LiveKit room
+- Stage-aware interviewer prompts
+- Explicit interview state machine
+- Silero voice activity detection
+- Deepgram `nova-3` speech recognition
+- Groq-hosted `llama-3.3-70b-versatile` reasoning
+- ElevenLabs `eleven_turbo_v2_5` speech synthesis
+- Automatic stage transitions based on turns and elapsed time
+- A 60-second no-response fallback during self-introduction
+- Startup validation for required environment variables
+- Logging for transcripts, transitions, room connection, and session errors
 
 ## Required API keys
 
-Create `.env` or `.env.local` in the repository root with:
+Create `.env` or `.env.local` in this directory:
 
 ```env
 LIVEKIT_URL=wss://your-livekit-project.livekit.cloud
 LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
-GOOGLE_API_KEY=your_google_ai_studio_api_key
+GROQ_API_KEY=your_groq_api_key
 DEEPGRAM_API_KEY=your_deepgram_api_key
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ```
 
-### Where to get free-tier-friendly keys
+Credential dashboards:
 
-- **LiveKit**: Create a free LiveKit Cloud project at <https://cloud.livekit.io>, then copy the WebSocket URL plus API key/secret from the project settings.
-- **Google Gemini**: Create a Gemini API key in Google AI Studio at <https://aistudio.google.com/app/apikey>. This is used only for the LLM.
-- **Deepgram**: Sign up at <https://console.deepgram.com/signup>, then create/copy an API key from the Deepgram console. This is used for Speech-to-Text.
-- **ElevenLabs**: Sign up at <https://elevenlabs.io/sign-up>, then create/copy an API key from your ElevenLabs profile or developer/API key settings. This is used for Text-to-Speech.
+- **LiveKit Cloud:** <https://cloud.livekit.io>
+- **GroqCloud:** <https://console.groq.com/keys>
+- **Deepgram:** <https://console.deepgram.com/signup>
+- **ElevenLabs:** <https://elevenlabs.io/sign-up>
 
-> Free tiers and quotas can change. Check each provider dashboard for your current monthly credits/limits before running long sessions.
+> Free tiers, model availability, and quotas can change. Check each provider dashboard before running long sessions.
 
 ## Setup
 
-Create and activate a virtual environment:
+From this directory, create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies from the repository root:
+On Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Download LiveKit plugin model files, including Silero VAD assets:
+Download the LiveKit plugin assets, including Silero VAD files:
 
 ```bash
 python agent.py download-files
@@ -64,38 +95,40 @@ python agent.py download-files
 
 ## Run
 
-For a local terminal test:
+Local terminal test:
 
 ```bash
 python agent.py console
 ```
 
-For a LiveKit worker that can be dispatched to rooms:
+LiveKit worker mode:
 
 ```bash
 python agent.py start
 ```
 
-When the worker starts successfully, join a room from the LiveKit Agents Playground or your frontend. The agent joins as a participant, listens to the candidate microphone through Deepgram STT, uses Gemini to generate the interviewer response, and speaks through ElevenLabs TTS.
+After the worker starts, join a room through the LiveKit Agents Playground or a compatible frontend.
 
 ## Interview flow
 
-- The session starts in `SELF_INTRO` and asks the candidate to introduce themself.
-- After the first final user transcript, the state machine advances to `PAST_EXPERIENCE` and asks about a project or past role.
-- After the next final user transcript, the state machine advances to `COMPLETE` and closes with a short thank-you.
-- If no final transcript is received during the self-introduction stage within 60 seconds, a watchdog advances to the past-experience stage automatically.
+The agent begins in `SELF_INTRO`, welcomes the candidate, and asks for a brief introduction.
 
-## Debugging
-
-The agent validates required environment variables at startup and logs missing keys before failing fast. It also logs room connection, session start, final user transcripts, stage transitions, timeout fallback, and LiveKit session errors.
-
-## Project files
+Final candidate transcripts are counted as interview turns. After at least three turns and 25 seconds in a stage, the state machine can advance:
 
 ```text
-agent.py                            # Root runnable LiveKit agent
-requirements.txt                    # Python dependencies
-.env.example                        # Environment variable template
-livekit-interview-agent/agent.py     # Compatibility copy of the agent
-livekit-interview-agent/README.md    # Challenge-specific README
-livekit-interview-agent/.env.example # Compatibility env template
+SELF_INTRO → PAST_EXPERIENCE → COMPLETE
 ```
+
+If the candidate provides no final transcript within 60 seconds during self-introduction, the watchdog advances the interview to the past-experience stage.
+
+The past-experience stage asks about the candidate's role, challenges, lessons learned, and project impact before closing the interview.
+
+## Architecture notes
+
+Speech recognition, reasoning, and speech synthesis use separate providers so each component can be replaced, tested, or tuned independently.
+
+Groq's OpenAI-compatible endpoint also makes it possible to change the hosted model or provider without redesigning the rest of the LiveKit voice pipeline.
+
+## Security
+
+Keep real API credentials in `.env`, `.env.local`, or another local secret store. Never commit active keys to the repository.

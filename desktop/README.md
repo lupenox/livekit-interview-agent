@@ -69,6 +69,12 @@ Create an unpacked application for the current operating system:
 npm run package
 ```
 
+On Linux, launch that local package with:
+
+```bash
+./out/MockMate-linux-x64/mockmate
+```
+
 Create the platform installer or archive:
 
 ```bash

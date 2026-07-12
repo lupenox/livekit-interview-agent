@@ -61,6 +61,10 @@ function createWindow(): void {
     mainWindow = null;
   });
 
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[desktop] renderer loaded', mainWindow?.webContents.getURL());
+  });
+
   mainWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
     console.error('[desktop] renderer failed to load', { code, description, url });
   });

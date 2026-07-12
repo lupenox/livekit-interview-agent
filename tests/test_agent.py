@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENT_PATH = ROOT / "agent.py"
 
 
-class _Options:
+class _Options(dict):
     def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+        super().__init__(kwargs)
 
 
 class _RunContext:
@@ -175,6 +175,28 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(next_agent.ctx, context)
         self.assertIn("past project or role", message)
 
+    async def test_self_intro_on_enter_resets_timer_and_greets(self):
+        context = self.agent.InterviewContext(stage_start_time=1.0)
+        intro = self.agent.SelfIntroductionAgent(context)
+        intro.session = types.SimpleNamespace(say=AsyncMock())
+        scheduled = []
+
+        def capture_task(coro):
+            scheduled.append(coro)
+            coro.close()
+            return object()
+
+        with (
+            patch.object(self.agent.time, "time", return_value=50.0),
+            patch.object(self.agent.asyncio, "create_task", side_effect=capture_task),
+        ):
+            await intro.on_enter()
+
+        self.assertEqual(context.stage_start_time, 50.0)
+        self.assertEqual(len(scheduled), 1)
+        intro.session.say.assert_awaited_once()
+        self.assertIn("introducing yourself", intro.session.say.await_args.args[0])
+
     async def test_self_intro_timeout_advances_agent(self):
         context = self.agent.InterviewContext(stage_start_time=10.0)
         intro = self.agent.SelfIntroductionAgent(context)
@@ -274,12 +296,12 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(
             session.started_with["agent"], self.agent.SelfIntroductionAgent
         )
-        self.assertEqual(session.kwargs["turn_handling"].endpointing.mode, "fixed")
-        self.assertEqual(session.kwargs["turn_handling"].endpointing.min_delay, 1.0)
-        self.assertEqual(session.kwargs["turn_handling"].endpointing.max_delay, 4.0)
-        self.assertEqual(session.kwargs["turn_handling"].interruption.mode, "adaptive")
+        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["mode"], "fixed")
+        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["min_delay"], 1.0)
+        self.assertEqual(session.kwargs["turn_handling"]["endpointing"]["max_delay"], 4.0)
+        self.assertEqual(session.kwargs["turn_handling"]["interruption"]["mode"], "adaptive")
         self.assertEqual(
-            session.kwargs["turn_handling"].interruption.min_duration, 0.6
+            session.kwargs["turn_handling"]["interruption"]["min_duration"], 0.6
         )
 
     async def test_entrypoint_fails_before_provider_setup_when_key_is_missing(self):

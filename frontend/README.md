@@ -13,7 +13,7 @@ From the repository root:
 ```bash
 cd frontend
 cp .env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 

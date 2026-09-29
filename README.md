@@ -136,7 +136,7 @@ In a second terminal:
 ```bash
 cd frontend
 cp .env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
@@ -217,7 +217,7 @@ Run the frontend checks with:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run lint
 npm run build
 ```

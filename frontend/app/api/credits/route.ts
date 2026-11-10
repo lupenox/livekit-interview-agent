@@ -1,20 +1,8 @@
 import { NextResponse } from 'next/server';
+import type { CreditStatus, ProviderCredit } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-type CreditStatus = 'ok' | 'low' | 'critical' | 'unavailable';
-
-type ProviderCredit = {
-  provider: 'ElevenLabs' | 'Deepgram' | 'Groq';
-  label: string;
-  status: CreditStatus;
-  remaining: number | null;
-  limit: number | null;
-  unit: string;
-  percentRemaining: number | null;
-  detail?: string;
-};
 
 type ElevenLabsSubscription = {
   character_count?: number;

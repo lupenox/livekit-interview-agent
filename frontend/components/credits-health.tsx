@@ -2,24 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCw, WalletCards } from 'lucide-react';
-
-type CreditStatus = 'ok' | 'low' | 'critical' | 'unavailable';
-
-type ProviderCredit = {
-  provider: 'ElevenLabs' | 'Deepgram' | 'Groq';
-  label: string;
-  status: CreditStatus;
-  remaining: number | null;
-  limit: number | null;
-  unit: string;
-  percentRemaining: number | null;
-  detail?: string;
-};
-
-type CreditsResponse = {
-  providers: ProviderCredit[];
-  checkedAt: string;
-};
+import type { CreditStatus, CreditsResponse, ProviderCredit } from '@/lib/types';
 
 const numberFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 

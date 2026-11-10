@@ -369,6 +369,30 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Staff Backend Engineer", intro.instructions)
         self.assertIn("Staff Backend Engineer", past.instructions)
 
+    async def test_entrypoint_connects_and_waits_for_participant_metadata(self):
+        participant = types.SimpleNamespace(metadata='{"targetRole": "ML Systems Engineer"}')
+        room = types.SimpleNamespace(metadata="", remote_participants={})
+        ctx = types.SimpleNamespace(
+            room=room,
+            connect=AsyncMock(),
+            wait_for_participant=AsyncMock(return_value=participant),
+        )
+        env = {
+            "GROQ_API_KEY": "groq-test-key",
+            "DEEPGRAM_API_KEY": "deepgram-test-key",
+            "ELEVENLABS_API_KEY": "elevenlabs-test-key",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            await self.agent.entrypoint(ctx)
+
+        ctx.connect.assert_awaited_once()
+        ctx.wait_for_participant.assert_awaited_once()
+        session = self.stubs.session_class.instances[-1]
+        started_agent = session.started_with["agent"]
+        self.assertEqual(started_agent.ctx.target_role, "ML Systems Engineer")
+        self.assertIn("ML Systems Engineer", started_agent.instructions)
+
 
 if __name__ == "__main__":
     unittest.main()

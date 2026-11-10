@@ -68,35 +68,38 @@ async def _update_agent(session: AgentSession, next_agent: Agent) -> None:
         await handoff_result
 
 
-def _extract_target_role(room: object) -> Optional[str]:
+def _extract_role_from_metadata_str(raw: object) -> Optional[str]:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            role = (parsed.get("targetRole") or "").strip()
+            if role:
+                return role
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def _extract_target_role(room: object, participant: object = None) -> Optional[str]:
     """
-    Extract optional `targetRole` from LiveKit room or remote participant metadata
+    Extract optional `targetRole` from a connected LiveKit participant or room metadata
     (populated by the Next.js `/api/token` route).
     """
-    metadata_candidates: list[str] = []
-
-    room_meta = getattr(room, "metadata", None)
-    if isinstance(room_meta, str) and room_meta.strip():
-        metadata_candidates.append(room_meta)
+    if participant is not None:
+        role = _extract_role_from_metadata_str(getattr(participant, "metadata", None))
+        if role:
+            return role
 
     remote_participants = getattr(room, "remote_participants", None)
     if isinstance(remote_participants, dict):
-        for participant in remote_participants.values():
-            p_meta = getattr(participant, "metadata", None)
-            if isinstance(p_meta, str) and p_meta.strip():
-                metadata_candidates.append(p_meta)
+        for remote in remote_participants.values():
+            role = _extract_role_from_metadata_str(getattr(remote, "metadata", None))
+            if role:
+                return role
 
-    for raw in metadata_candidates:
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                role = (parsed.get("targetRole") or "").strip()
-                if role:
-                    return role
-        except (ValueError, TypeError):
-            continue
-
-    return None
+    return _extract_role_from_metadata_str(getattr(room, "metadata", None))
 
 
 @dataclass
@@ -104,6 +107,7 @@ class InterviewContext:
     stage_start_time: float = field(default_factory=time.time)
     current_stage: Optional[str] = None
     target_role: Optional[str] = None
+    room: Optional[object] = field(default=None, repr=False)
     timeout_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
     def cancel_timeout(self) -> None:
@@ -121,11 +125,27 @@ class BaseInterviewStageAgent(Agent):
     BASE_INSTRUCTIONS: str = ""
 
     def __init__(self, ctx: InterviewContext):
-        instructions = self.BASE_INSTRUCTIONS
-        if ctx.target_role:
-            instructions = f"{instructions} The candidate is interviewing for a {ctx.target_role} role."
-        super().__init__(instructions=instructions)
         self.ctx = ctx
+        super().__init__(instructions=self._build_instructions())
+
+    def _build_instructions(self) -> str:
+        if self.ctx.target_role:
+            return f"{self.BASE_INSTRUCTIONS} The candidate is interviewing for a {self.ctx.target_role} role."
+        return self.BASE_INSTRUCTIONS
+
+    async def _sync_target_role_from_room(self) -> None:
+        """Refresh `target_role` once the room is connected and participants have joined."""
+        if not self.ctx.target_role and self.ctx.room is not None:
+            discovered_role = _extract_target_role(self.ctx.room)
+            if discovered_role:
+                self.ctx.target_role = discovered_role
+                new_instructions = self._build_instructions()
+                self.instructions = new_instructions
+                update_fn = getattr(self, "update_instructions", None)
+                if callable(update_fn):
+                    res = update_fn(new_instructions)
+                    if inspect.isawaitable(res):
+                        await res
 
     def _start_stage_timer(self, timeout: int) -> None:
         self.ctx.cancel_timeout()
@@ -163,6 +183,7 @@ class SelfIntroductionAgent(BaseInterviewStageAgent):
 
     async def on_enter(self):
         logger.info("=== SELF-INTRODUCTION stage ===")
+        await self._sync_target_role_from_room()
         self._start_stage_timer(INTRO_TIMEOUT)
         await self.session.say(
             "Hello! Thank you for joining this mock interview. "
@@ -197,6 +218,7 @@ class PastExperienceAgent(BaseInterviewStageAgent):
 
     async def on_enter(self):
         logger.info("=== PAST EXPERIENCE stage ===")
+        await self._sync_target_role_from_room()
         self._start_stage_timer(PAST_TIMEOUT)
 
     async def _timeout_watcher(self, timeout: int):
@@ -223,8 +245,21 @@ async def entrypoint(ctx: JobContext):
     deepgram_api_key = _require_env("DEEPGRAM_API_KEY")
     elevenlabs_api_key = _require_env("ELEVENLABS_API_KEY")
 
-    target_role = _extract_target_role(ctx.room)
-    interview_ctx = InterviewContext(target_role=target_role)
+    participant = None
+    connect_fn = getattr(ctx, "connect", None)
+    if callable(connect_fn):
+        res = connect_fn()
+        if inspect.isawaitable(res):
+            await res
+
+    wait_fn = getattr(ctx, "wait_for_participant", None)
+    if callable(wait_fn):
+        res = wait_fn()
+        if inspect.isawaitable(res):
+            participant = await res
+
+    target_role = _extract_target_role(ctx.room, participant=participant)
+    interview_ctx = InterviewContext(target_role=target_role, room=ctx.room)
 
     session = AgentSession(
         userdata=interview_ctx,

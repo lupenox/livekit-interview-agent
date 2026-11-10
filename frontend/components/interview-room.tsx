@@ -11,13 +11,9 @@ import {
 import { ShieldCheck, Sparkles, TimerReset } from 'lucide-react';
 
 import { CreditsHealth } from './credits-health';
+import type { ConnectionDetails } from '@/lib/types';
 
-export type ConnectionDetails = {
-  serverUrl: string;
-  participantToken: string;
-  roomName: string;
-  participantName: string;
-};
+export type { ConnectionDetails };
 
 type InterviewRoomProps = {
   connection: ConnectionDetails;

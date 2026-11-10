@@ -160,6 +160,11 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "Missing DEEPGRAM_API_KEY"):
                 self.agent._require_env("DEEPGRAM_API_KEY")
 
+    def test_groq_model_can_be_configured_without_source_edits(self):
+        with patch.dict(os.environ, {"GROQ_MODEL": "openai/gpt-oss-20b"}):
+            agent, _ = _load_agent_module()
+        self.assertEqual(agent.GROQ_MODEL, "openai/gpt-oss-20b")
+
     def test_stage_agents_use_distinct_instructions(self):
         context = self.agent.InterviewContext(stage_start_time=1.0)
         intro = self.agent.SelfIntroductionAgent(context)
@@ -327,6 +332,66 @@ class AgentConfigurationTests(unittest.IsolatedAsyncioTestCase):
                 await self.agent.entrypoint(ctx)
 
         self.assertEqual(self.stubs.session_class.instances, [])
+
+    async def test_stale_self_intro_timer_does_not_fire_after_stage_transition(self):
+        context = self.agent.InterviewContext(stage_start_time=5.0)
+        intro = self.agent.SelfIntroductionAgent(context)
+        intro.session = types.SimpleNamespace(
+            say=AsyncMock(),
+            update_agent=AsyncMock(),
+        )
+
+        async def transition_during_sleep(_timeout):
+            # Simulate the candidate finishing their intro at t=10s while the 60s timer sleeps
+            await intro.move_to_past_experience(_RunContext())
+
+        with (
+            patch.object(self.agent.asyncio, "sleep", side_effect=transition_during_sleep),
+            patch.object(self.agent.time, "time", return_value=70.0),
+        ):
+            await intro._timeout_watcher(60)
+
+        intro.session.say.assert_not_awaited()
+        intro.session.update_agent.assert_not_awaited()
+
+    def test_extract_target_role_and_customize_instructions(self):
+        participant = types.SimpleNamespace(metadata='{"targetRole": "Staff Backend Engineer"}')
+        room = types.SimpleNamespace(
+            metadata="",
+            remote_participants={"p1": participant},
+        )
+        role = self.agent._extract_target_role(room)
+        self.assertEqual(role, "Staff Backend Engineer")
+
+        context = self.agent.InterviewContext(target_role=role)
+        intro = self.agent.SelfIntroductionAgent(context)
+        past = self.agent.PastExperienceAgent(context)
+        self.assertIn("Staff Backend Engineer", intro.instructions)
+        self.assertIn("Staff Backend Engineer", past.instructions)
+
+    async def test_entrypoint_connects_and_waits_for_participant_metadata(self):
+        participant = types.SimpleNamespace(metadata='{"targetRole": "ML Systems Engineer"}')
+        room = types.SimpleNamespace(metadata="", remote_participants={})
+        ctx = types.SimpleNamespace(
+            room=room,
+            connect=AsyncMock(),
+            wait_for_participant=AsyncMock(return_value=participant),
+        )
+        env = {
+            "GROQ_API_KEY": "groq-test-key",
+            "DEEPGRAM_API_KEY": "deepgram-test-key",
+            "ELEVENLABS_API_KEY": "elevenlabs-test-key",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            await self.agent.entrypoint(ctx)
+
+        ctx.connect.assert_awaited_once()
+        ctx.wait_for_participant.assert_awaited_once()
+        session = self.stubs.session_class.instances[-1]
+        started_agent = session.started_with["agent"]
+        self.assertEqual(started_agent.ctx.target_role, "ML Systems Engineer")
+        self.assertIn("ML Systems Engineer", started_agent.instructions)
 
 
 if __name__ == "__main__":
